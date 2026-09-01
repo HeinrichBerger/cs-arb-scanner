@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.60.26
+// @version      8.60.27
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -142,7 +142,8 @@
     mgladbach: "borussia monchengladbach",
     "al ahli uae": "shabab al ahli",
     "guarani par": "club guarani",
-    "el geish": "talaea el gaish"
+    "el geish": "talaea el gaish",
+    wolves: "wolverhampton"
   };
   // __SYNONYMS_SIDEALIAS_END__
   // Negative Namens-Aliase: Paare, die NIE als identisch gelten duerfen, obwohl

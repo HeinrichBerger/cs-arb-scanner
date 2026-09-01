@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.60.25
+// @version      8.60.26
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -6473,6 +6473,42 @@ if (!hit) continue;
                 'BF ' + h2.teams[i] + ' ' + scoreTxt + ' (Lay)', '');
             }
           }
+        }
+        // Satz-Winner (sw1A/B, sw2A/B, v8.60.26): Boost „X gewinnt Satz 1/2"
+        // braucht die Set-Winner-Backs/Lays auch im why-Pull, sonst findet
+        // der Boost-Check das Leg nur, wenn der Scan-Cross zufaellig ein Arb
+        // war. PIN-Seite: period-Moneyline (h2.w[per] = [A, B]), BF-Seite:
+        // „Set N Winner"-Runner (bfH2H.sw, x.lay). Kinds identisch mit den
+        // DB-Rows (sw1A/sw1B/sw2A/sw2B) — normalisiere_why_kind laesst sie
+        // unveraendert durch.
+        const swRowsW = (bfHMatch && (bfHMatch.sw || []).length)
+          ? (bfHMatch.sw || []) : (bfH.sw || []);
+        for (const sw of swRowsW) {
+          if (!evTol(sw.name) && !evMatch(pinTeams, sw.name)) continue;
+          const wk = h2.w && h2.w[sw.per];
+          if (!wk) {
+            add('sw' + sw.per + 'A', null, (sw.r0 && sw.r0.lay) || null,
+              'PIN Satz ' + sw.per + ' ' + (h2.teams[0] || ''),
+              'BF Set ' + sw.per + ' Winner', '');
+            add('sw' + sw.per + 'B', null, (sw.r1 && sw.r1.lay) || null,
+              'PIN Satz ' + sw.per + ' ' + (h2.teams[1] || ''),
+              'BF Set ' + sw.per + ' Winner', '');
+            continue;
+          }
+          const s1 = mScore(h2.teams[0], sw.r0) + mScore(h2.teams[1], sw.r1);
+          const s2 = mScore(h2.teams[0], sw.r1) + mScore(h2.teams[1], sw.r0);
+          let x = null, y = null;
+          if (s1 > s2) { x = sw.r0; y = sw.r1; }
+          else if (s2 > s1) { x = sw.r1; y = sw.r0; }
+          else continue;
+          add('sw' + sw.per + 'A',
+            isValidPrice(wk[0]) ? wk[0] : null, (x && x.lay) || null,
+            'PIN Satz ' + sw.per + ' ' + h2.teams[0],
+            'BF Set ' + sw.per + ' Winner', '');
+          add('sw' + sw.per + 'B',
+            isValidPrice(wk[1]) ? wk[1] : null, (y && y.lay) || null,
+            'PIN Satz ' + sw.per + ' ' + h2.teams[1],
+            'BF Set ' + sw.per + ' Winner', '');
         }
       }
       // Diagnose-Bilanz fuer den tenscore-Live-Test (v8.60.3): zeigt, welche

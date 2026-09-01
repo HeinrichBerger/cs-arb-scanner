@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.60.24
+// @version      8.60.25
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -64,6 +64,15 @@
   // fuer den Browser; pvb_odds_pipe.compute_edge muss dieselben Formeln liefern
   // (wird in test_kind_catalog_consistency.py / test_pvb_odds_pipe.py abgeglichen).
   function edgeOf(r) {
+    // Tenscore-Lock-Zeilen (Tennis Satz-Score, v8.60.21/8.60.24): back und lay
+    // sind hier zwei VERSCHIEDENE Ereignisse, die nur zusammen als Boost-Lock
+    // funktionieren (Lay X <Score> + Back Gegner-ML bzw. +1,5/+2,5) — einzeln
+    // sind sie kein Komplement (z.B. ist der Gegen-Back zu B-ML in Bo3
+    // {A 2:0, A 2:1}, aber der Lay „X 2-1" deckt nur A 2:1 ab; A kann auch
+    // 2:0 gewinnen — User-Befund Mirra Andreeva v Janice Tjen). Kein Edge,
+    // keine Fake-Surebet; die Rows bleiben als Daten fuer den Boost-Arb-Dialog.
+    if (['s51A', 's51B', 'sd15PlusA', 'sd15PlusB',
+      's21A', 's21B', 's32A', 's32B'].indexOf(r.kind) >= 0) return 0;
     // H2H Back-Back: kein Commission auf PIN, BF-Lay Commission in effQ
     if (r.kind === 'bbA' || r.kind === 'bbB' || /^ouBB/.test(r.kind) || /^hfouBB/.test(r.kind) ||
         r.kind === 'bbTqA' || r.kind === 'bbTqB' ||
@@ -6149,13 +6158,18 @@ if (!hit) continue;
     // (Boost-Arb braucht die BF-Lays z.B. fuer Lay-Both), nur die Anzeige
     // wird nicht mit statischen Linien-Gap-Zeilen zugemuellt (v8.44.0).
     const skipped = [];
+    const TEN_LOCK_KINDS = ['s51A', 's51B', 'sd15PlusA', 'sd15PlusB',
+      's21A', 's21B', 's32A', 's32B'];
     const add = (kind, pinBack, bfLay, pinTxt, bfTxt, extra, quietNote) => {
+      const lockNote = TEN_LOCK_KINDS.indexOf(kind) >= 0 ?
+        'Lock-Instrumente (Boost, kein Paarvergleich!)' : '';
       const reason = [];
       if (!pinBack) reason.push('KEIN PIN-Back' + (pinTxt ? ' (' + pinTxt + ')' : ''));
       if (bfLay == null) reason.push('KEIN BF-Lay' + (bfTxt ? ' [' + bfTxt + ']' : ''));
       if (pinBack && bfLay != null) {
         if (!isValidPrice(pinBack)) reason.push('PIN-Back ungueltig (' + pinBack + ')');
         else if (!isValidPrice(bfLay)) reason.push('BF-Lay ungueltig (' + bfLay + ')');
+        else if (lockNote) reason.push(lockNote);
         else if (!arbDir(pinBack, bfLay)) reason.push('kein Arb: PIN ' + pinBack.toFixed(2) +
           ' > BF-Lay ' + bfLay.toFixed(2));
         else reason.push('ARB!');

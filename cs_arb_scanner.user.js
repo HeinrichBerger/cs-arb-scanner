@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.60.27
+// @version      8.60.28
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -1634,25 +1634,43 @@
   };
 
   // ---------- Betfair: Lays je COMP (bfLays) ----------
-  async function bfLays(comp, log, st) {
-    const c = bfLaysCache.get(comp);
+  // Optionaler 4. Parameter opts.onlyEvent (Array von PIN-Teamnamen): Bei
+  // gezielten Einzel-Checks (WHY/Boost-Arb) werden NUR die Maerkte des
+  // passenden Events geladen statt der ganzen COMP (~12 Spiele x 60 Maerkte
+  // = ~35 bymarket-Chunks -> 3 Chunks fuer ein Spiel, ~10x schneller). Die
+  // EVENT-Namen liefert die bynode-Struktur kostenlos mit; der Filter
+  // laeuft VOR den teuren bymarket-Calls (v8.60.28). Ohne opts identisch
+  // zum bisherigen Verhalten (Scan braucht die ganze COMP).
+  async function bfLays(comp, log, st, opts) {
+    const o = opts || {};
+    const evFilter = (o.onlyEvent && o.onlyEvent.length >= 2)
+      ? o.onlyEvent.map(x => String(x).trim()).filter(Boolean) : null;
+    // Cache-Key filterbewusst: gefilterte Rows duerfen nie in ungefilterte
+    // Aufrufe leaken (und umgekehrt).
+    const cacheKey = evFilter ? comp + '|ev:' + evFilter.join('|') : comp;
+    const c = bfLaysCache.get(cacheKey);
     if (c && (Date.now() - c.ts) < BF_CACHE_TTL_MS) {
       if (st) { st.bfRaw = c.raw; st.bfOut = c.rows.length; }
-      if (DBG) log('  Betfair ' + comp + ': cached (' + c.rows.length + ' Lays)');
+      if (DBG) log('  Betfair ' + comp + ': cached (' + c.rows.length + ' Lays' +
+        (evFilter ? ', ev-Filter)' : ')'));
       return c.rows;
     }
     const j = await bfLeagueMarkets(comp);
     if (!j || !j.nodes || !j.nodes.length) {
       if (st) st.bfRaw = 0;
-      bfLaysCache.set(comp, { rows: [], raw: 0, ts: Date.now() });
+      bfLaysCache.set(cacheKey, { rows: [], raw: 0, ts: Date.now() });
       if (DBG) log('  Betfair ' + comp + ': leer'); return [];
     }
     if (st) {
       st.bfRaw = new Set(j.nodes.filter(n => n.nodeType === 'EVENT')
         .map(n => n.name)).size;
+      // Alle EVENT-Namen dieser COMP (fuer die WHY-Diagnose "kein BF-Event
+      // (Teamnamen-Diff)" — die GUI zeigt dann, welche Events es gibt).
+      st.bfEventNames = [...new Set(j.nodes.filter(n => n.nodeType === 'EVENT')
+        .map(n => n.name).filter(Boolean))];
     }
     const mname = bfMktName;
-    const markets = j.nodes.filter(n => n.nodeType === 'MARKET' &&
+    let markets = j.nodes.filter(n => n.nodeType === 'MARKET' &&
       classifyMarket(mname(n)).size > 0);
     if (!markets.length) { if (DBG) log('  Betfair ' + comp + ': kein CS/BTTS-Markt'); return []; }
     const htNames = j.nodes.filter(n => n.nodeType === 'MARKET' &&
@@ -1661,12 +1679,28 @@
     if (htNames.length)
       if (DBG) log('  DEBUG BF HT-Marktnamen: ' + htNames.join(' | '));
     const evName = bfEventNames(j, markets);
+    // Event-Filter (v8.60.28): nur die Maerkte des gematchten Events behalten
+    // — erspart ~90 % der bymarket-Calls bei gezielten Checks (Championship
+    // 12 Spiele -> 1). Nicht matchbare MarketIds (ohne EVENT-Ancestor) fallen
+    // raus — im alten Pfad haetten solche Rows im WHY eh keinen evMatch-Treffer
+    // gehabt (name fiel auf eventId zurueck).
+    if (evFilter) {
+      const before = markets.length;
+      markets = markets.filter(m => evMatch(evFilter, evName[m.nodeId.split(':')[1]] || ''));
+      if (st) { st.bfFilterBefore = before; st.bfFilterAfter = markets.length; }
+      if (DBG) log('  Betfair ' + comp + ': Event-Filter ' + evFilter.join(' v ') +
+        ' -> ' + markets.length + ' von ' + before + ' Maerkten');
+      if (!markets.length) {
+        bfLaysCache.set(cacheKey, { rows: [], raw: st ? st.bfRaw : 0, ts: Date.now() });
+        return [];
+      }
+    }
     const mktName = {};
     markets.forEach(m => { mktName[m.nodeId.split(':')[1]] = mname(m); });
     // bymarket akzeptiert nur begrenzte ID-Mengen pro Request -> 20er-Chunks
     const bms = await bfFetchChunks(bfChunkIds(markets));
     if (!bms.length) {
-      bfLaysCache.set(comp, { rows: [], raw: st ? st.bfRaw : 0, ts: Date.now() });
+      bfLaysCache.set(cacheKey, { rows: [], raw: st ? st.bfRaw : 0, ts: Date.now() });
       if (DBG) log('  Betfair ' + comp + ': leer'); return [];
     }
     const rows = [];
@@ -2156,7 +2190,7 @@
         }
       }
     });
-    bfLaysCache.set(comp, { rows, raw: st ? st.bfRaw : 0, ts: Date.now() });
+    bfLaysCache.set(cacheKey, { rows, raw: st ? st.bfRaw : 0, ts: Date.now() });
     if (DBG) log('  Betfair ' + comp + ': ' + rows.length + ' Lays' +
       (rows.filter(r => r.kind === 'oe').length ?
         ' (oe ' + rows.filter(r => r.kind === 'oe').length + ')' : '') +
@@ -6601,22 +6635,35 @@ if (!hit) continue;
       ' | cornersOu=' + (h.cornersOu || []).length);
 
     // ----- Schritt 3: ECHTE BF-Pipeline (bfLays) -----
-    const lays = await bfLays(comp, log, {}).catch(() => []);
+    // v8.60.28: Event-beschraenkter BF-Fetch — bfLays laedt mit
+    // opts.onlyEvent NUR die Maerkte des passenden Events statt der ganzen
+    // COMP (~10x schneller, Championship: 35 statt 3 bymarket-Chunks). Die
+    // EVENT-Namen der COMP liefert bfLays in st.bfEventNames fuer die
+    // Diagnose, falls kein Event matcht (Teamnamen-Diff).
+    const stBf = {};
+    const lays = await bfLays(comp, log, stBf, { onlyEvent: pinTeams }).catch(() => []);
     if (!lays.length) {
+      const evNames = stBf.bfEventNames || [];
+      if (evNames.length && stBf.bfFilterBefore !== undefined) {
+        // COMP hat Events, aber keins matcht die PIN-Teams (Teamnamen-Diff) —
+        // die erste Event-Liste in die reasons, damit die GUI zeigt, wie die
+        // Events in dieser COMP heissen (analog h2h-Zweig v8.60.4).
+        log('=== KEIN BF-Event zu "' + pinTeams.join(' v ') + '" in ' + comp +
+          ' (Teamnamen-Diff). BF-Events: ' + evNames.slice(0, 10).join(' | '));
+        const hint = 'BF-Events dieser COMP (erste ' + evNames.length + '): ' +
+          evNames.join(' | ');
+        out.reasons.push('kein BF-Event (Teamnamen-Diff) — ' + hint);
+        return out;
+      }
       log('=== BF-Lays leer fuer ' + comp);
       log('  Hinweis: bfLays braucht die Betfair-Seite im Browser (fetch gegen betfair.com).');
       log('  Oeffne eine Betfair-Seite (z.B. ' + comp + ') in einem Tab, damit der BF-Abruf klappt.');
       out.reasons.push('BF leer (Betfair-Seite im Browser offen? bfLays braucht betfair.com-Zugriff)');
       return out;
     }
-    const bs = lays.filter(b => evMatch(pinTeams, b.name));
-    out.bf = { comp: String(comp), lays: lays.length, forEvent: bs.length };
-    if (!bs.length) {
-      log('=== KEIN BF-Event zu "' + pinTeams.join(' v ') + '" in ' + comp +
-        ' (Teamnamen-Diff). BF-Events: ' + [...new Set(lays.map(b => b.name))].slice(0, 10).join(' | '));
-      out.reasons.push('kein BF-Event (Teamnamen-Diff)');
-      return out;
-    }
+    const bs = lays;  // bfLays hat bereits auf das Event gefiltert
+    out.bf = { comp: String(comp), lays: lays.length, forEvent: bs.length,
+      evFiltered: true };
     out.bf.event = bs[0].name;
     log('BF-Event: ' + bs[0].name + ' (' + bs.length + ' Lays) in ' + comp);
     log('  BF-Kanaele: ' + [...new Set(bs.map(b => b.kind))].join(' | '));

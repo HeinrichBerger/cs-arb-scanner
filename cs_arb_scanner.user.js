@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.60.29
+// @version      8.62.5
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -133,19 +133,96 @@
   // JEDEN teamMatch()-Aufruf (findH, sideLay, mo3Clean, hfSide, evMatch, ...).
   // __SYNONYMS_SIDEALIAS_BEGIN__
   const SIDE_ALIAS = {
-    "g osaka": "gamba osaka",
-    "yokohama fm": "yokohama f marinos",
-    "man utd": "manchester united",
-    "man city": "manchester city",
-    "internazionale u23": "inter milan",
-    "m'gladbach": "borussia monchengladbach",
-    mgladbach: "borussia monchengladbach",
+    "abu qair semad": "abo qair semads",
+    "al ahli doha": "al ahli qat",
     "al ahli uae": "shabab al ahli",
-    "guarani par": "club guarani",
+    "al arabi doha": "al arabi qat",
+    "al hazem": "al hazm ksa",
+    "antigua and barbuda falcons": "antigua barbuda falcs",
+    "arzignano valchiampo": "arzignanochiampo",
+    "atlanta united": "atlanta utd",
+    "atletico mineiro": "atletico mg",
+    "austria vienna": "austria wien",
+    "banga gargzdai": "fk banga gargzdu",
+    "barcelona sc": "barcelona ecu",
+    "boston united": "boston utd",
+    "celta vigo ii": "celta vigo b",
+    "chernomorets 1919 burgas": "chernomorets bourgas",
+    "club america": "cf america",
+    "corvinul hunedoara": "fc hunedoara",
+    "csikszereda miercurea ciuc": "csikszereda w",
+    "dinamo bucuresti": "dinamo bucharest",
+    "dundee united": "dundee utd",
     "el geish": "talaea el gaish",
-    wolves: "wolverhampton"
+    "el mansoura": "el mansurah",
+    "el sekka el hadid": "el seka elhadeed",
+    erzurumspor: "erzurum bb",
+    "ferrocarril midland": "fc midland",
+    "fh hafnarfjordur": "hafnarfjordur w",
+    "flora tallinn": "tallinna fc flora",
+    "fortaleza ceif": "fortaleza fc",
+    "g osaka": "gamba osaka",
+    "grasshopper club zurich": "grasshoppers zurich",
+    "guarani par": "club guarani",
+    "incheon united": "incheon utd",
+    "independiente medellin": "ind medellin",
+    internazionale: "inter",
+    "internazionale u23": "inter milan",
+    "istra 1961": "nk istra",
+    "iwaki fc": "iwaki sc",
+    "jagiellonia bialystok": "jagiellonia bialystock",
+    "jeju sk": "jeju utd",
+    "kagoshima united": "kagoshima utd",
+    karlsruher: "karlsruhe",
+    "kts k luzino": "wiked luzino",
+    "los angeles galaxy": "la galaxy",
+    "ludogorets razgrad ii": "ludogorets razgrad b",
+    "m'gladbach": "borussia monchengladbach",
+    "machida zelvia": "fc machida",
+    "maleyet kafr el zayiat": "maleyeit kafr el zayiat",
+    "man city": "manchester city",
+    "man utd": "manchester united",
+    mgladbach: "borussia monchengladbach",
+    "minnesota united": "minnesota utd",
+    "nacional asuncion": "nacional par",
+    "nacional de football": "nacional uru",
+    "nomme united": "nomme utd",
+    "nongkseh ss cc": "nongkseh scc",
+    "nottingham forest": "nottm forest",
+    "notts county": "notts co",
+    "odd bk": "odds bk",
+    "oxford united": "oxford utd",
+    "paris saint germain": "paris st g",
+    pats: "patriots",
+    "polonia warsaw": "polonia warszawa",
+    "racing club de montevideo": "racing club uru",
+    "real sociedad ii": "sociedad b",
+    "river plate montevideo": "river plate uru",
+    royals: "tridents",
+    "rz pellets wac": "wolfsberger ac",
+    "saint etienne": "st etienne",
+    "sfk 2000 sarajevo": "sfa 2000 sarajevo w",
+    "sheffield wednesday": "sheff wed",
+    "sint truidense": "sint truiden",
+    "stade lavallois": "laval",
+    "sutton united": "sutton utd",
+    "tochigi city": "tochigi uva fc",
+    "tokyo verdy": "tokyo v",
+    "top oss": "fc oss",
+    united: "utd",
+    "universidad catolica del ecuador": "univ catolica ecu",
+    "universidad de concepcion": "univ de concepcion",
+    vanspor: "van buyuksehir belediyespor",
+    "walter ferretti": "cd walter ferreti",
+    "west bromwich albion": "west brom",
+    wolves: "wolverhampton",
+    "wsg tirol": "wsg wattens",
+    "yokohama fm": "yokohama f marinos"
   };
   // __SYNONYMS_SIDEALIAS_END__
+  // CPL (Cricket): PIN "St. Kitts and Nevis Patriots" / "Barbados Royals" vs
+  // BF "St Kitts & Nevis Pats" / "Barbados Tridents" (v8.60.33) — die Aliasse
+  // oben werden vom Build aus synonyms.json regeneriert.
   // Negative Namens-Aliase: Paare, die NIE als identisch gelten duerfen, obwohl
   // der Token-Match sie als Teilmenge erkennen wuerde (z.B. "Dundee Utd" vs
   // "Dundee", "CA Independiente" vs "Independiente Rivadavia" - verschiedene
@@ -155,15 +232,35 @@
   // __SYNONYMS_SIDEBLOCK_BEGIN__
   const SIDE_BLOCK = {
     "dundee utd": ["dundee"],
-    "ca independiente": ["independiente rivadavia"]
+    "dundee united": ["dundee"],
+    "ca independiente": ["independiente rivadavia"],
+    internazionale: ["inter miami"]
   };
   // __SYNONYMS_SIDEBLOCK_END__
+  // Runtime-Aliase (v8.61.0): die VBSB-GUI kann per /cmd alias-set einen
+  // bestaetigten Name-Mismatch (Name-Matching-Tab) sofort an den laufenden
+  // Scanner pushen — ohne Rebuild/Tampermonkey-Update. Sie gelten wie
+  // SIDE_ALIAS in JEDEM teamMatch()-Aufruf; der naechste Build uebernimmt
+  // die bestaetigten Aliase dauerhaft via synonyms.json.
+  const RUNTIME_ALIAS = {};
+  function setRuntimeAlias(from, to) {
+    const k = String(from || '').trim().toLowerCase();
+    const v = String(to || '').trim().toLowerCase();
+    if (!k || !v || k === v) return false;
+    RUNTIME_ALIAS[k] = v;
+    TOKS_CACHE.clear();  // aliasExp laeuft in toks() -> Cache invalidiert
+    return true;
+  }
   function aliasExp(s) {
     let out = s;
-    for (const [k, v] of Object.entries(SIDE_ALIAS)) {
-      out = out.replace(new RegExp('(^| )' + k.replace(/ /g, ' +') + '(?= |$)', 'g'),
-        m => m.replace(k, v));
-    }
+    const apply = map => {
+      for (const [k, v] of Object.entries(map)) {
+        out = out.replace(new RegExp('(^| )' + k.replace(/ /g, ' +') + '(?= |$)', 'g'),
+          m => m.replace(k, v));
+      }
+    };
+    apply(SIDE_ALIAS);
+    apply(RUNTIME_ALIAS);
     return out;
   }
   function toks(s) {
@@ -184,6 +281,21 @@
     return x === y ||
       (x.length >= 3 && y.length >= 3 && (x.startsWith(y) || y.startsWith(x)));
   }
+  // Initial-Kompatibilitaet (v8.62.1): 1-2-Zeichen-Initiale (ggf. mit Punkt)
+  // als Praefix eines laengeren Tokens — BF-Schreibweise bei Einzelsportarten
+  // (Tennis/UFC): "A Zverev" / "Li Tagger" / "Be Shelton" vs PIN "Alexander
+  // Zverev" / "Lilli Tagger" / "Ben Shelton" (User-Befund 2026-09-01: US-Open-
+  // Unmatched-Flut). Ab 3 Zeichen uebernimmt tokCompat den Praefix-Vergleich;
+  // hier geht es NUR um echte Initialen, damit "li" nicht jedes Token ab
+  // "li..." matcht. Der Nachname muss weiterhin exakt (letztes Token) treffen.
+  function initCompat(x, y) {
+    const a = String(x).replace(/\./g, '');
+    const b = String(y).replace(/\./g, '');
+    if (!a || !b || a === b) return false;
+    if (a.length <= 2 && b.length >= 3 && b.startsWith(a)) return true;
+    if (b.length <= 2 && a.length >= 3 && a.startsWith(b)) return true;
+    return false;
+  }
   // Negative Namens-Blockliste: wenn eines der beiden Teams in SIDE_BLOCK
   // steht und das andere in seiner Verbotsliste, ist das KEIN Match - auch
   // wenn die Token-Menge (Teilmenge) es erlauben wuerde.
@@ -196,8 +308,16 @@
     if (sideBlocked(a, b)) return false;
     const A = toks(a), B = toks(b);
     if (!A.size || !B.size) return false;
+    // Treffer zaehlen: exakt ODER praefix-kompatibel (tokCompat, >= 3 Zeichen)
+    // ODER Initial-Praefix (initCompat, 1-2 Zeichen). So matchen BF-Kurzformen
+    // ("Gim La Plata", "Ben Shelton", "Li Tagger") gegen PIN-Vollnamen — der
+    // Kollisions-Schutz unten (Erst-Token praefix-kompatibel + letztes Token
+    // exakt) verhindert weiterhin Stadt-Praefix-/Suffix-Verwechslungen.
     let hit = 0;
-    for (const t of A) if (B.has(t)) hit++;
+    for (const t of A) {
+      if (B.has(t)) { hit++; continue; }
+      if ([...B].some(u => tokCompat(t, u) || initCompat(t, u))) hit++;
+    }
     if (hit < Math.ceil(Math.min(A.size, B.size) * TEAM_MATCH_RATIO)) return false;
     // Kollisions-Schutz (Praefix UND Suffix): Das ERSTE Token des kuerzeren
     // Namens muss praefix-kompatibel mit einem Token des laengeren sein, UND
@@ -208,8 +328,113 @@
     // identisch gelten -> sonst Home/Away-Mix in Specs (w2ns/btsws/resous/hfs).
     const [S, L] = A.size <= B.size ? [A, B] : [B, A];
     const Sarr = [...S];
-    if (![...L].some(t => tokCompat(Sarr[0], t))) return false;
+    if (![...L].some(t => tokCompat(Sarr[0], t) || initCompat(Sarr[0], t))) return false;
     return L.has(Sarr[Sarr.length - 1]);
+  }
+
+  // ---------- Near-Miss-Erkennung (Name-Candidates, v8.61.0) ----------
+  // Schicht 1 des Name-Matching-Konzepts: BF-Events, die findH nicht besteht,
+  // werden gegen die PIN-Matchups der Liga fuzzy-gescort. Eindeutige
+  // Beinahe-Treffer landen als Kandidaten im Snapshot -> Name-Matching-Tab
+  // der App -> einmal bestaetigt, wird das Alias dauerhaft (synonyms.json)
+  // + sofort (Runtime-Push) aktiv. Radikale Umbennungen (RZ Pellets WAC,
+  // Royals/Tridents) erkennt der Score bewusst NICHT — die bleiben beim
+  // reaktiven Pfad (User meldet -> Alias manuell).
+  const NAME_NEAR_MISS_MIN = 0.5;  // Vorschlags-Schwelle
+
+  function editDist(a, b) {
+    const A = String(a), B = String(b);
+    const n = A.length, m = B.length;
+    if (!n) return m;
+    if (!m) return n;
+    let prev = new Array(m + 1);
+    for (let j = 0; j <= m; j++) prev[j] = j;
+    for (let i = 1; i <= n; i++) {
+      const cur = [i];
+      for (let j = 1; j <= m; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1,
+          prev[j - 1] + (A[i - 1] === B[j - 1] ? 0 : 1));
+      }
+      prev = cur;
+    }
+    return prev[m];
+  }
+
+  function bigramSim(a, b) {
+    const g = s => {
+      const out = new Set();
+      const t = String(s).replace(/\s/g, '');
+      for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2));
+      return out;
+    };
+    const A = g(a), B = g(b);
+    if (!A.size || !B.size) return 0;
+    let h = 0;
+    for (const x of A) if (B.has(x)) h++;
+    return h / Math.min(A.size, B.size);
+  }
+
+  // Fuzzy-Aehnlichkeit zweier Teamnamen im norm-Raum (0..1). Kombiniert
+  // Token-Overlap (inkl. Praefix-Kompatibilitaet), Bigram-Overlap (kurze
+  // Kuerzel wie "Pats"/"Patriots"), normalisierte Edit-Distanz und den
+  // Nachnamen-Praefix. Bewusst OHNE aliasExp — hier geht es um die rohe
+  // Namensverwandtschaft, nicht um bereits bekannte Aliase.
+  function teamFuzzy(a, b) {
+    const na = norm(a), nb = norm(b);
+    const A = (na || '').split(' ').filter(Boolean);
+    const B = (nb || '').split(' ').filter(Boolean);
+    if (!A.length || !B.length) return 0;
+    let ov = 0;
+    for (const t of A) if (B.some(u => tokCompat(t, u) || initCompat(t, u))) ov++;
+    const ratio = ov / Math.min(A.length, B.length);
+    const lenNorm = editDist(na, nb) / Math.max(na.length, nb.length, 1);
+    const snA = A[A.length - 1], snB = B[B.length - 1];
+    const sn = (snA && snB && tokCompat(snA, snB)) ? 1 : 0;
+    return Math.min(1, ratio * 0.45 + bigramSim(na, nb) * 0.30 +
+      (1 - lenNorm) * 0.15 + sn * 0.10);
+  }
+
+  // Liefert den EINDEUTIGEN Near-Miss-Kandidaten eines BF-Event-Namens gegen
+  // die PIN-Matchups einer Liga: { matchup, pinTeam, bfTeam, score } fuer das
+  // am besten passende Matchup — oder null (kein Kandidat / mehrdeutig).
+  // pinTeam/bfTeam = das Team-Paar, das teamMatch NICHT besteht (der eigent-
+  // liche Blocker); score = schlechtestes Paar des Matchups (matcht ein Paar
+  // bereits, zaehlt es als 1.0).
+  function nearMissCand(bfName, matchups) {
+    const halves = String(bfName || '').split(/\s+v\s+/i).filter(Boolean);
+    if (halves.length !== 2) return null;
+    const hits = [];
+    for (const m of (matchups || [])) {
+      const t = (m.teams || []).filter(Boolean);
+      if (t.length < 2) continue;
+      let best = null;
+      for (const [i, j] of [[0, 1], [1, 0]]) {
+        const p1 = { pin: t[i], bf: halves[0] };
+        const p2 = { pin: t[j], bf: halves[1] };
+        const m1 = teamMatch(p1.pin, p1.bf);
+        const m2 = teamMatch(p2.pin, p2.bf);
+        if (m1 && m2) continue;  // dieses Matchup matcht bereits
+        const s1 = m1 ? 1 : teamFuzzy(p1.pin, p1.bf);
+        const s2 = m2 ? 1 : teamFuzzy(p2.pin, p2.bf);
+        const worst = Math.min(s1, s2);
+        if (worst < NAME_NEAR_MISS_MIN) continue;
+        // Blocker = das Paar, das teamMatch nicht besteht; bestehen beide
+        // nicht, das mit dem niedrigeren Score.
+        const bi = !m1 ? 0 : (!m2 ? 1 : (s1 <= s2 ? 0 : 1));
+        const cand = {
+          matchup: m,
+          pinTeam: bi === 0 ? p1.pin : p2.pin,
+          bfTeam: bi === 0 ? p1.bf : p2.bf,
+          score: worst
+        };
+        if (!best || cand.score > best.score) best = cand;
+      }
+      if (best) hits.push(best);
+    }
+    // Mehrdeutigkeit: passt das Event auf mehrere Matchups (Score >= Schwelle),
+    // ist es KEIN sauberer Kandidat — gleiche Falle wie findH n===2 -> null.
+    if (hits.length !== 1) return null;
+    return hits[0];
   }
 
   // ---------- BF-Marktklassifizierung ----------
@@ -2190,6 +2415,22 @@
         }
       }
     });
+    // Event-Startzeiten stempeln (v8.62.5): bymarket-EVENT-Knoten tragen keine
+    // openDate, aber jeder bymarket-MARKT hat description.marketTime == Spielstart.
+    // Die Unmatched-Sammlung (scan.js) filtert damit BF-Events ausserhalb des
+    // PIN-Scan-Fensters (Folgerunden-/Turnier-Events derselben COMP) als
+    // "kein Verlust" heraus — die matchen an ihrem eigenen Spieltag normal.
+    const evStart = {};
+    bfEachMarket(bms, mk => {
+      const mt = mk && mk.description && mk.description.marketTime;
+      if (!mt) return;
+      const nm = evName[mk.marketId] || '';
+      if (!nm || evStart[nm]) return;
+      const ts = new Date(mt).getTime();
+      if (Number.isFinite(ts)) evStart[nm] = ts;
+    });
+    if (Object.keys(evStart).length)
+      for (const r of rows) if (r.st == null && evStart[r.name]) r.st = evStart[r.name];
     bfLaysCache.set(cacheKey, { rows, raw: st ? st.bfRaw : 0, ts: Date.now() });
     if (DBG) log('  Betfair ' + comp + ': ' + rows.length + ' Lays' +
       (rows.filter(r => r.kind === 'oe').length ?
@@ -2277,6 +2518,21 @@
         r0: teams2[0], r1: teams2[1], marketId: mk.marketId, live: bfLive,
         hadDraw, evId: e.eventId || '' });
     });
+    // Event-Startzeiten stempeln (v8.62.5, analog bfLays): description.marketTime
+    // der bymarket-Markt-Knoten == Spielstart. Fuer den Unmatched-Fensterfilter
+    // (scan.js collectUnmatched): BF-Events ausserhalb des PIN-Scan-Fensters
+    // (Turnier-Events anderer Spieltage) sind kein echter Verlust.
+    const moStart = {};
+    bfEachMarket(moBms, mk => {
+      const mt = mk && mk.description && mk.description.marketTime;
+      if (!mt) return;
+      const nm = evName[mk.marketId] || '';
+      if (!nm || moStart[nm]) return;
+      const ts = new Date(mt).getTime();
+      if (Number.isFinite(ts)) moStart[nm] = ts;
+    });
+    if (Object.keys(moStart).length)
+      for (const r of rows) if (r.st == null && moStart[r.name]) r.st = moStart[r.name];
     const sbRows = [];
     const sbBms = await bfFetchChunks(bfChunkIds(sbM));
     // v8.60.11-Diagnose: Set-Betting-Maerkte, die bfH2H gefunden hat, und
@@ -6708,8 +6964,13 @@ if (!hit) continue;
         // Back-Back-Crosslegs (bttsBBY: PIN-Yes + BF-No-Back, bttsBBN:
         // PIN-No + BF-Yes-Back).
         const yn = h.yn || [];
-        if (!yn.length) add(k, null, b.layYes, 'kein yn-Special', 'BF ' + b.name, '');
-        else {
+        if (!yn.length) {
+          // Kein PIN-yn-Special (z.B. Pokal-Spiele): trotzdem beide BF-Lays
+          // als btts Yes/No emittieren (statt Basis-Kanal `btts`), damit die
+          // Boost-Arb-Legs bttsY/bttsN die BF-Lay-Quoten finden (v8.60.32).
+          add(k + ' Yes', null, b.layYes, 'kein yn-Special', 'BF layYes', '');
+          add(k + ' No', null, b.layNo, 'kein yn-Special', 'BF layNo', '');
+        } else {
           const r = await pinBtts(yn, b, log).catch(() => null);
           const pre = r && r.pre, bb = r && r.bb;
           const srcPre = pre ? 'PIN BTTS-Spec ' + pre.sid : 'kein Preismatch';
@@ -7634,6 +7895,26 @@ if (!hit) continue;
         devlog('Discovery-Deny dauerhaft: pid ' + a.pid + ' -> ' + a.comp +
           ' (' + (a.reason || 'GUI-Ablehnung (Discovery-Tab)') + ')');
       } },
+    // Name-Matching: bestaetigtes Alias aus der VBSB-GUI (Name-Matching-Tab)
+    // sofort im laufenden Scanner aktivieren — ohne Rebuild/Tampermonkey-
+    // Update. aliases: [{from, to}, ...] oder {from: to}. Der naechste Build
+    // uebernimmt die bestaetigten Aliase dauerhaft via synonyms.json.
+    { id: 'alias-set', group: 'mapping', label: 'Alias setzen (Runtime)', desc: 'Runtime-Alias aus der VBSB-GUI (Name-Matching-Tab) sofort im laufenden Scanner aktivieren (wirkt in jedem teamMatch/findH/evMatch, kein Rebuild noetig). aliases: [{from,to}] oder {from:to}.',
+      params: [],
+      run: a => {
+        const raw = a.aliases;
+        let list = [];
+        if (Array.isArray(raw)) list = raw;
+        else if (raw && typeof raw === 'object') list = Object.entries(raw)
+          .map(([from, to]) => ({ from, to }));
+        let n = 0;
+        for (const e of list) {
+          if (setRuntimeAlias(e.from, e.to)) n++;
+        }
+        if (n) devlog('Runtime-Alias gesetzt: ' + n + ' (' + list.map(x => x.from + ' -> ' + x.to).join(' | ') + ')');
+        else devlog('alias-set: keine Aliase uebernommen (leer/ungueltig)');
+        return { ok: true, set: n };
+      } },
   ];
   // Tool-Gruppen (Reihenfolge = Reihenfolge beim Rendern von Dropdown/Optgroup).
   const TOOL_GROUP_LABELS = [
@@ -7902,6 +8183,11 @@ if (!hit) continue;
       const nb = norm(b.name);
       const h = findH(nb, b.name);
       if (!h) {
+        // Name-Candidates: Near-Miss-Sammlung fuer den Name-Matching-Tab
+        // (v8.61.0) — nur bei Events, die wirklich keinem PIN-Spiel zuorden-
+        // bar sind; Dedupe/Cap verhindern Fluten im Dauerbetrieb.
+        if (!collectNameCand(b.name, pin, lid, comp, LIGA_NAMEN[lid] || ''))
+          collectUnmatched(b.name, lid, comp, LIGA_NAMEN[lid] || '', b.st);
         if (b.kind === 'cs' || b.kind.startsWith('cs') || b.kind.startsWith('hcs'))
           pushRow(rows, lid, { name: b.name, hit: null, b,
             kind: b.kind, lay: b.lay, vol: b.vol });
@@ -7944,8 +8230,18 @@ if (!hit) continue;
             csSrc = best.src;
           }
         }
-        if (!csBack) continue;
-        if (!arbDir(csBack, b.lay)) continue;
+        // v8.60.34: CS-Rows auch OHNE Arb-Richtung speichern. Der Boost-Arb-
+        // Solver braucht die BF-CS-Lays (Score-Mengen-Muster 6/7/9: Lay der
+        // exakten Endstaende) und die PIN-CS-Backs (Score-Luecken-Back) auch
+        // dann, wenn PIN-Back < BF-Lay ist (der Normalfall) — vorher
+        // verwarf arbDir() genau diese Rows, der Snapshot hatte nie CS-Quoten
+        // und die intelligenten Correct-Score-Strategien fehlten im
+        // Boost-Check (User-Befund „BTTS Ja ∧ Over 5.5“: nur teurer
+        // Doppel-Lay). Die App-Surebet-Liste zeigt weiterhin nur edge > 0
+        // (pvb_odds_pipe), Nicht-Arb-CS-Rows sind dort unsichtbar, aber fuer
+        // den Boost-Check nutzbar.
+        if (b.lay >= 200) continue;                // BF-Platzhalter ohne Markt
+        if (!csBack && !(b.lay > 1.01)) continue;  // weder PIN-Back noch BF-Lay
         pushRow(rows, lid, { name: b.name, hit: h, b,
           kind: b.kind, back: csBack, src: csSrc,
           lay: b.lay, vol: b.vol });
@@ -7954,7 +8250,10 @@ if (!hit) continue;
         const hcsKey = b.kind.replace('hcs', '').replace(/(\d)(\d)/, '$1,$2');
         const htBack = (h.htCsBacks && h.htCsBacks[hcsKey]) || 0;
         // Lay >= 200 = BF-Platzhalter ohne echten Markt -> ueberspringen
-        if (b.lay >= 200) continue;
+        // v8.60.34: HT-CS analog FT-CS auch ohne Arb-Richtung speichern
+        // (Boost-Arb braucht die HT-CS-Quoten fuer HT-Muster).
+        if (b.lay >= 200) continue;                 // BF-Platzhalter ohne Markt
+        if (!htBack && !(b.lay > 1.01)) continue;   // weder PIN-Back noch BF-Lay
         if (!htBack) {
           if (!hcsDbg[b.name + ':' + hcsKey]) {
             hcsDbg[b.name + ':' + hcsKey] = true;
@@ -7962,9 +8261,7 @@ if (!hit) continue;
               b.lay.toFixed(2) + ', aber kein PIN-HT-CS-Back (PIN-Keys: ' +
               Object.keys(h.htCsBacks || {}).join(',') + ')');
           }
-          continue;
-        }
-        if (!arbDir(htBack, b.lay)) {
+        } else if (!arbDir(htBack, b.lay)) {
           // Nur bei Nah-Marge (Back >= 80 % des Lays) loggen, sonst Rauschen
           if (htBack >= b.lay * 0.8 && !hcsDbg[b.name + ':' + hcsKey]) {
             hcsDbg[b.name + ':' + hcsKey] = true;
@@ -7972,7 +8269,6 @@ if (!hit) continue;
               htBack.toFixed(2) + ' vs BF-Lay ' + b.lay.toFixed(2) + ' (Marge ' +
               (100 * (1 - htBack / b.lay)).toFixed(1) + ' %) => kein Arb');
           }
-          continue;
         }
         pushRow(rows, lid, { name: b.name, hit: h, b,
           kind: b.kind, back: htBack, src: 'HT CS ' + hcsKey,
@@ -9318,6 +9614,8 @@ if (arbDir(g.over, g.b.layO))
         if (!leagueW && womenMark(nb)) { skipped++; continue; }
         const h = findH(nb, b.name);
       if (!h) {
+        if (!collectNameCand(b.name, pin, lid, comp, H2H_NAMEN[lid] || ''))
+          collectUnmatched(b.name, lid, comp, H2H_NAMEN[lid] || '', b.st);
         pushRow(rows, lid, { name: b.name, hit: null, b,
           kind: 'h2h', back: 0, lay: 0, vol: 0, live: null });
         continue;
@@ -9782,9 +10080,78 @@ if (arbDir(g.over, g.b.layO))
     return KIND[k] || '?';
   };
 
+  // ---------- Name-Candidates (Near-Miss-Sammlung, v8.61.0) ----------
+  // Schicht 1 des Name-Matching-Konzepts: JEDES BF-Event, das findH nicht
+  // besteht (CS- wie H2H-Pfad), wird gegen die PIN-Matchups der Liga
+  // fuzzy-gescort (src/matching.js nearMissCand). Eindeutige Beinahe-
+  // Treffer landen im Snapshot als `nameCandidates` -> Name-Matching-Tab
+  // der App (bestaetigen -> synonyms.json + Runtime-Push, ablehnen ->
+  // dauerhaft ausblenden). Dedupe pro Session + Cap je Scan-Lauf, damit
+  // der Dauerbetrieb nicht geflutet wird.
+  const nameCands = [];
+  const nameCandsSeen = new Set();
+  let nameCandsRunCap = 0;
+  const NAME_CANDS_PER_RUN = 10;
+  // Unmatched-Events (v8.62.0, Option A): BF-Events ohne PIN-Match UND ohne
+  // Near-Miss-Kandidat (Score < 0.5 / mehrdeutig) — der „Rest", der sonst
+  // still verloren geht. Wird gecappt je Lauf + dedupliziert pro Session an
+  // die App gemeldet, damit der User sieht, WIE VIELE es sind und sie dort
+  // als „irrelevant" ausblenden kann. Wichtig: ein groesserer Teil davon
+  // sind keine echten Verluste (BF-Events, die PIN gar nicht anbietet).
+  const unmatchedEvents = [];
+  let unmatchedRunCap = 0;
+  const UNMATCHED_PER_RUN = 20;
+
+  function collectNameCand(bfName, pinMap, lid, comp, leagueName) {
+    if (!bfName || nameCandsRunCap >= NAME_CANDS_PER_RUN) return false;
+    const dedupeKey = norm(bfName) + '|' + lid;
+    if (nameCandsSeen.has(dedupeKey)) return false;
+    const cand = nearMissCand(bfName, Object.values(pinMap));
+    if (!cand) return false;
+    nameCandsSeen.add(dedupeKey);
+    nameCandsRunCap++;
+    nameCands.push({
+      pin: (cand.matchup.teams || []).join(' v '),
+      pinTeam: cand.pinTeam, bfTeam: cand.bfTeam, bf: bfName,
+      score: Math.round(cand.score * 100) / 100,
+      lid, comp, league: leagueName || ''
+    });
+    return true;
+  }
+
+  // Sammelt BF-Events, die findH NICHT besteht und fuer die es keinen
+  // Near-Miss-Kandidaten gibt. Aufruf nur, wenn collectNameCand false
+  // lieferte (bzw. das Event nicht schon dort behandelt wurde):
+  // nameCandsSeen markiert das Event auch bei fehlendem Kandidaten, damit
+  // das Event pro Liga nur EINMAL gemeldet wird (erster Markt entscheidet).
+  // evSt (v8.62.5): BF-Event-Start (epoch ms, aus bymarket description.marketTime
+  // in bfLays/bfH2H gestempelt). Liegt der Start AUSSERHALB des PIN-Scan-
+  // Fensters, ist das Event kein echter Verlust: BF-COMPs listen oft mehrere
+  // Spieltage/Turnier-Runden (z.B. US Open 52 Events, Argentinien-Liga zwei
+  // Runden), PIN aber nur das aktuelle Fenster — solche Events matchen an
+  // ihrem eigenen Spieltag normal. Ohne Fenster-Check wuerden sie bei JEDEM
+  // Lauf als "unmatched" gemeldet und die Liste mit Folgerunden-Rauschen
+  // fluten (seen-Zaehler in die Hunderte). Events ohne Start (evSt fehlt)
+  // werden weiter gemeldet (konservativ: kein echter Verlust ausschliessen).
+  function collectUnmatched(bfName, lid, comp, leagueName, evSt) {
+    if (!bfName || unmatchedRunCap >= UNMATCHED_PER_RUN) return;
+    const dedupeKey = norm(bfName) + '|' + lid;
+    if (nameCandsSeen.has(dedupeKey)) return;
+    if (evSt) {
+      const now = Date.now();
+      if (evSt < now - HOURS_BACK * MS_PER_HOUR || evSt > now + daysAhead * MS_PER_DAY) return;
+    }
+    nameCandsSeen.add(dedupeKey);
+    unmatchedRunCap++;
+    unmatchedEvents.push({
+      bf: bfName, lid, comp, league: leagueName || ''
+    });
+  }
+
   function makeSnapshot(rows, games) {
     // Delegiert an den reinen Builder (src/snapshot.js) — dort Node-testbar.
-    return makeSnapshotCandidates(rows, edgeOf, sportVonLiga, COMM, games);
+    return makeSnapshotCandidates(rows, edgeOf, sportVonLiga, COMM, games,
+      nameCands, unmatchedEvents);
   }
 
   function download(name, text) {
@@ -9801,7 +10168,7 @@ if (arbDir(g.over, g.b.layO))
   // standalone testbar ist, ohne die komplette Browser-IIFE laden zu muessen.
   // Kanonisch fuer den Browser; pvb_odds_pipe/Python muss dieselbe Struktur
   // parsen. Siehe test/snapshot.test.js.
-  function makeSnapshotCandidates(rows, edgeOf, sportVonLiga, COMM, games) {
+  function makeSnapshotCandidates(rows, edgeOf, sportVonLiga, COMM, games, nameCands, unmatched) {
     const cands = rows.filter(r => r.hit).map(r => ({
       league: r.league, leagueName: r.leagueName || '', name: r.name, kind: r.kind,
       back: r.back, src: r.src, lay: r.lay, vol: r.vol, edge: edgeOf(r),
@@ -9821,9 +10188,25 @@ if (arbDir(g.over, g.b.layO))
       league: g.league, leagueName: g.leagueName || '', name: g.name || '',
       startTime: g.startTime || '', comp: g.comp || '', mid: g.mid || ''
     }));
+    // Name-Candidates (v8.61.0): Near-Miss-Treffer der Name-Matching-
+    // Sammlung (src/scan.js collectNameCand). Die App legt sie in der
+    // name_candidates-Tabelle ab -> Name-Matching-Tab (bestaetigen/ablehnen).
+    const nlist = (nameCands || []).map(c => ({
+      pin: c.pin || '', pinTeam: c.pinTeam || '', bfTeam: c.bfTeam || '',
+      bf: c.bf || '', score: c.score || 0, lid: c.lid || '',
+      comp: c.comp || '', league: c.league || ''
+    }));
+    // Unmatched-Events (v8.62.0, Option A): BF-Events ohne PIN-Match und
+    // ohne Near-Miss-Kandidat (Score < 0.5). Nur die BF-Namen + Kontext
+    // (Liga/COMP) — der User sieht, WIE VIELE es sind und kann sie in der
+    // App als "irrelevant" ausblenden. Kein PIN-Bezug moeglich (deshalb
+    // hier KEIN Alias-Kandidat).
+    const ulist = (unmatched || []).map(u => ({
+      bf: u.bf || '', lid: u.lid || '', comp: u.comp || '', league: u.league || ''
+    }));
     return { ts: new Date().toISOString(), comm: COMM,
       candidates: cands.sort((a, b) => b.edge - a.edge),
-      games: glist };
+      games: glist, nameCandidates: nlist, unmatched: ulist };
   }
   // ---------- Helfer ----------
 
@@ -10730,6 +11113,8 @@ if (arbDir(g.over, g.b.layO))
       missedDirArbs.length = 0;
       leagueWatchReset();
       reqStatsReset();
+      nameCandsRunCap = 0;  // Name-Candidates: Cap je Scan-Lauf (v8.61.0)
+      unmatchedRunCap = 0;  // Unmatched-Events: Cap je Scan-Lauf (v8.62.0)
       const scanStart = Date.now();
       if (!leagueMapLoaded) {
         log('Warte auf League-Mapping ...');

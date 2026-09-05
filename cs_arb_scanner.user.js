@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.71.0
+// @version      8.71.2
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -8723,9 +8723,6 @@ if (!hit) continue;
         if (!bfKey) continue;
         const bfLay = b.btsw[bfKey];
         if (!bfLay) continue;
-        const m = tryBL('BTSW', 'BTSW ' + out.yn + ' ' + out.team + ' ' + b.name,
-          out.back, bfLay.lay, b.name + ' ' + out.yn + ' ' + out.team, log);
-        if (!m.ok) continue;
         let side = 'D';
         if (out.team !== 'Draw') {
           if (teamMatch(h.teams[0], out.team)) side = 'H';
@@ -8733,13 +8730,26 @@ if (!hit) continue;
           else continue;
         }
         const kind = 'btw' + side + (out.yn === 'yes' ? 'Y' : 'N');
-        log('  BTSW ' + out.yn + ' & ' + out.team + ' ' + b.name + ': Spec ' +
-          pinSpec.sid + ' (PIN ' + out.back.toFixed(2) + ') / BF ' +
-          bfLay.lay.toFixed(2) + ' Score ' + m.score.toFixed(3));
-        pushRow(rows, lid, { name: b.name, hit: h, b,
-          kind, back: out.back, src: 'PIN ' + out.yn + '&' + out.team +
-            ' (Spec ' + pinSpec.sid + ') / BF ' + bfKey + ' Lay',
-          lay: bfLay.lay, vol: bfLay.vol });
+        const m = tryBL('BTSW', 'BTSW ' + out.yn + ' ' + out.team + ' ' + b.name,
+          out.back, bfLay.lay, b.name + ' ' + out.yn + ' ' + out.team, log);
+        if (m.ok)
+          log('  BTSW ' + out.yn + ' & ' + out.team + ' ' + b.name + ': Spec ' +
+            pinSpec.sid + ' (PIN ' + out.back.toFixed(2) + ') / BF ' +
+            bfLay.lay.toFixed(2) + ' Score ' + m.score.toFixed(3));
+        // v8.71.2 (Boost-Quote-Carrier, analog RESOU v8.71.0): die BTSW-Rows
+        // (btw<Seite><Y/N> = kombinierter Ausgang "Team & Yes/No") werden auch
+        // OHNE Arb-Richtung gespeichert — der Boost-Solver braucht die
+        // kombinierten Markt-Lays fuer die AQUIVALENZ-Reduktion („Tipp X ∧
+        // BTTS Ja" ≡ BTSW X & Yes) im DB-Schnellpfad (Lay Äquivalent), auch
+        // wenn beim Scan kein Arb besteht. Daten-Existenz-Gate: PIN-Back +
+        // BF-Lay vorhanden (lay >= 1000 = BF-Platzhalter). App-Liste zeigt
+        // weiterhin nur edge > 0.
+        if (m.ok || (out.back > 1.01 && bfLay.lay > 1.01 && bfLay.lay < 1000)) {
+          pushRow(rows, lid, { name: b.name, hit: h, b,
+            kind, back: out.back, src: 'PIN ' + out.yn + '&' + out.team +
+              ' (Spec ' + pinSpec.sid + ') / BF ' + bfKey + ' Lay',
+            lay: bfLay.lay, vol: bfLay.vol });
+        }
       }
     }
     // ---------- RESOU (Result + O/U, kombinierter Ausgang) ----------

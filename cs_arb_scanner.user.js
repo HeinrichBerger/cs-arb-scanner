@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.81.7
+// @version      8.82.0
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -726,6 +726,17 @@
       return Number.isInteger(v) && v >= 1 && v <= 30 ? v : DAYS_AHEAD;
     } catch (e) { return DAYS_AHEAD; }
   })();
+
+  // Halbzeit-2-Wege (v8.81.8): Sportarten, bei denen PINs period-1-Moneyline
+  // die "1. Halbzeit" ist (Pinnacle-Konvention: 0 = Spiel, 1 = 1. Halbzeit —
+  // dieselbe Quelle wie HT-1X2 im Soccer und Satz-1-Winner im Tennis). NUR
+  // diese Sportarten bekommen die Kinds bl1hA/bl1hB: bei Tennis/Volleyball
+  // (Satz), Snooker (Frame), Ice Hockey (Drittel), AFL (Viertel) und
+  // Baseball/Cricket (Innings) bedeutet period 1 ETWAS ANDERES — dort darf
+  // kein 1.HZ-Kind entstehen (sonst wird eine Wette auf das falsche Ereignis
+  // gehecht). EINE Quelle fuer scan.js (DB-Pfad) und tools.js (WHY-Pfad).
+  const HALBZEIT_2W_SPORT = new Set(['Basketball', 'American Football',
+    'Rugby', 'Handball']);
 
   // ---------- Tuning-Konstanten ----------
   const PRICE_MATCH_THRESHOLD = 0.5;   // Max. Log-Ratio-Abweichung fuer Preis-Matching
@@ -6922,6 +6933,23 @@ if (!hit) continue;
           'PIN B (' + h2.teams[1] + ')', 'BF ' + y.nm, '',
           '', (x && isValidPrice(x.back)) ? x.back : 0);
       }
+      // 1. Halbzeit 2-Wege (v8.81.8): PIN period-1-Moneyline (h2.w[1]) —
+      // Betfair fuehrt im h2h-Pfad KEINEN „1st Half"-Markt (nur Soccer-COMPs
+      // via mo3h) → pinBack gesetzt, bfLay null. Genau dieser Kanal traegt die
+      // Back-Back-Cross-Gegenwette zu Pinnacle (Boost-Arb V2 „Back ¬M @ PIN"),
+      // identisch zum DB-Pfad (scan.js emitHalbzeit2W). Sport-Whitelist aus
+      // config.js — sonst wuerde bei Tennis/Volleyball der Satz-1-Markt
+      // faelschlich als „1. Halbzeit" gemeldet. Bewusst NACH der mo-Schleife
+      // (ein Kanal-Paar je Spiel, nicht je BF-Kandidat).
+      if (HALBZEIT_2W_SPORT.has(lidSport)) {
+        const w1 = h2.w && h2.w[1];
+        if (w1 && w1[0] > 1.01)
+          add('bl1h A', w1[0], null,
+            'PIN 1.HZ A (' + h2.teams[0] + ')', '—');
+        if (w1 && w1[1] > 1.01)
+          add('bl1h B', w1[1], null,
+            'PIN 1.HZ B (' + h2.teams[1] + ')', '—');
+      }
       // Tennis-Satz-Score-Kanaele (v8.60.1): der Boost-Arb-Check (tenscore
       // „X gewinnt 2:0/3:0") braucht die Set-Betting-Backs/Lays auch im
       // why-Pull, sonst findet er das Leg nur, wenn der Scan-Cross zufaellig
@@ -9959,6 +9987,41 @@ for (const cp of crossPairs2) {
       match: dtMatch, async: dtAsync, total: tEnd - t0 });
   }
 
+  // Halbzeit-2-Wege (v8.81.8): PIN period-1-Moneyline = "Sieger 1. Halbzeit",
+  // kinds bl1hA/bl1hB (Boost-Arb-Befund User 11.09.2026: Basketball „France v
+  // Germany", Boost auf die Zweiwegewette 1. HZ — Betfair fuehrt diesen Markt
+  // NICHT als Back/Lay, Gegenwette nur als Back-Back-Cross zu Pinnacle).
+  // Die Sport-Whitelist steht in config.js (HALBZEIT_2W_SPORT) — EINE Quelle
+  // fuer DB-Pfad (hier) und WHY-Pfad (tools.js).
+
+  // Emittiert die 1.HZ-2-Wege-Rows (bl1hA/bl1hB) fuer EIN H2H-Spiel.
+  // Rueckgabe: Anzahl gepushter Rows (fuer die PIN-only-Diagnose).
+  //   p = PIN-Eintrag (mit w[1] = [Heim, Auswaerts]), b = BF-Markt oder null
+  //   hint = Zusatz in src (z.B. 'kein BF-Event').
+  // Es gibt im h2h-Pfad KEINEN BF-1.-HZ-Markt → lay immer 0 (Kanal V2).
+  function emitHalbzeit2W(rows, lid, log, p, b, name, hint) {
+    if (!p || !HALBZEIT_2W_SPORT.has(sportVonLiga(lid))) return 0;
+    const w1 = p.w && p.w[1];
+    if (!w1) return 0;
+    const a = w1[0], bb = w1[1];
+    if (!(a > 1.01) && !(bb > 1.01)) return 0;
+    const tag = hint ? ' (' + hint + ')' : '';
+    let n = 0;
+    if (a > 1.01) {
+      pushRow(rows, lid, { name, hit: p, b, kind: 'bl1hA', back: a,
+        src: 'PIN 1.HZ A' + tag, lay: 0, vol: 0 });
+      n++;
+    }
+    if (bb > 1.01) {
+      pushRow(rows, lid, { name, hit: p, b, kind: 'bl1hB', back: bb,
+        src: 'PIN 1.HZ B' + tag, lay: 0, vol: 0 });
+      n++;
+    }
+    if (DBG) log('  DEBUG 1.HZ[' + lid + '] ' + name + ' ' + a + '/' + bb +
+      ' (PIN period-1-Moneyline = 1. Halbzeit)' + tag);
+    return n;
+  }
+
   async function scanH2HLeague(lid, comp, log, rows, seenRen, games) {
     // PIN und BF parallel laden (wie bfLaysWrap im CS-Pfad). BF-Fehler werden in
     // ein leeres Ergebnis gewandelt, damit eine BF-Fehlerlage weder den Scan der
@@ -10077,6 +10140,7 @@ for (const cp of crossPairs2) {
             kind: 'blB', back: bb, src: 'PIN B (kein BF-Event)', lay: 0, vol: 0 });
           pinOnlyN++;
         }
+        pinOnlyN += emitHalbzeit2W(rows, lid, log, p, null, nm, 'kein BF-Event');
       }
       if (pinOnlyN)
         log('  DEBUG PIN-only blA/blB-Rows[' + lid + ']: ' + pinOnlyN +
@@ -10196,6 +10260,13 @@ for (const cp of crossPairs2) {
         pushRow(rows, lid, { name: b.name, hit: h, b,
           kind: 'blB', back: bb, src: 'PIN B', lay: y.lay, vol: y.volL,
           xback: x && isValidPrice(x.back) ? x.back : 0 });
+      // 1. Halbzeit (2-Wege, v8.81.8) — PIN period-1-Moneyline (h.w[1]).
+      // KEIN BF-Markt im h2h-Pfad (Betfair quotiert „1st Half" nur fuer
+      // Soccer-COMPs ueber mo3h) → lay=0, xback=0. Genau dieser Kanal ist die
+      // „Back-Back-Cross-Gegenwette zu Pinnacle" (Boost V2: PIN-Back der
+      // Gegenseite); ungegatet wie die PIN-only-Rows (v8.79.13), damit der
+      // Boost-Check die Quoten auch ohne Scan-Arb im DB-Schnellpfad hat.
+      emitHalbzeit2W(rows, lid, log, h, b, b.name, null);
       // BB-Dedup: gleicher Markt kann als Pre-Match + In-Play zweimal geliefert werden
       const pushBB = (kind, src, pinBack, bfBack, bfVol) => {
         if (!(isValidPrice(pinBack) && isValidPrice(bfBack) &&
@@ -10252,6 +10323,7 @@ for (const cp of crossPairs2) {
           kind: 'blB', back: bb, src: 'PIN B (kein BF-Event)', lay: 0, vol: 0 });
         pinOnlyN++;
       }
+      pinOnlyN += emitHalbzeit2W(rows, lid, log, p, null, nm, 'kein BF-Event');
     }
     if (pinOnlyN)
       log('  DEBUG PIN-only blA/blB-Rows[' + lid + ']: ' + pinOnlyN +
@@ -10629,6 +10701,7 @@ for (const cp of crossPairs2) {
     hcs32: 'HT CS 3:2', hcs23: 'HT CS 2:3', hcs33: 'HT CS 3:3',
     bttsY: 'BTTS Yes', bttsN: 'BTTS No', bttsBBY: 'BTTS BB Yes', bttsBBN: 'BTTS BB No', h2h: 'H2H',
     blA: 'H2H BL A', blB: 'H2H BL B', bbA: 'H2H BB A', bbB: 'H2H BB B',
+    bl1hA: 'H2H 1.HZ BL A', bl1hB: 'H2H 1.HZ BL B',
     tqA: 'To Qualify BL A', tqB: 'To Qualify BL B',
     bbTqA: 'To Qualify BB A', bbTqB: 'To Qualify BB B',
     s2A: 'Set 2:0 A', s2B: 'Set 2:0 B',

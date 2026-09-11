@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.79.12
+// @version      8.81.4
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -139,6 +139,7 @@
     "abu qair semad": "abo qair semads",
     "ad cofutpa": "a d cofutpa",
     "ael limassol": "a e l",
+    "agrobiznes volochisk": "agrobiznes volochysk",
     "al adalah": "al adalh",
     "al ahli doha": "al ahli qat",
     "al ahli uae": "shabab al ahli",
@@ -193,6 +194,7 @@
     "el mansoura": "el mansurah",
     "el qanah": "olympic el qanal",
     "el sekka el hadid": "el seka elhadeed",
+    "entebbe uppc": "entebbe fc",
     erzurumspor: "erzurum bb",
     "escorpiones belen": "escorpiones fc",
     "fa siauliai": "fk siauliai",
@@ -203,6 +205,8 @@
     "flora tallinn": "tallinna fc flora",
     "florian nussle": "florian nuessle",
     "fortaleza ceif": "fortaleza fc",
+    "fratria varna": "fc fratria",
+    "fsk mariupol": "yarud mariupol",
     "g osaka": "gamba osaka",
     "gandzasar kapan": "fc gandzasar",
     "glasgow cosmics": "glasgow cosmic",
@@ -221,6 +225,7 @@
     internazionale: "inter",
     "internazionale u23": "inter milan",
     "istra 1961": "nk istra",
+    "ittihad al ramtha": "etihad al ramtha",
     "iwaki fc": "iwaki sc",
     "jagiellonia bialystok": "jagiellonia bialystock",
     "jeju sk": "jeju utd",
@@ -254,11 +259,13 @@
     "nacional de football": "nacional uru",
     "neftchi fergona": "neftchi fargona",
     "nk celik zenika": "celik zenica",
+    "nk izola": "mnk izola",
     "nomme united": "nomme utd",
     "nomme united ii": "fc n mme united u21",
     "nongkseh ss cc": "nongkseh scc",
     "nottingham forest": "nottm forest",
     "notts county": "notts co",
+    "nyva vinnytsya": "nyva vynnytsya",
     "o higgins": "ohiggins",
     "odd bk": "odds bk",
     "olimpia satu mare": "csm satu mare",
@@ -290,6 +297,7 @@
     "sfk 2000 sarajevo": "sfa 2000 sarajevo w",
     "sheffield wednesday": "sheff wed",
     "sint truidense": "sint truiden",
+    "sk slovan bratislava": "slovan bratislava u19",
     "sonnenhof grossaspach": "sg sonnenhof",
     "sporting cp": "sporting lisbon",
     "sporting lisbon ii": "sporting lisbon b",
@@ -298,6 +306,7 @@
     "stockholm internazionale": "fc stockholm",
     "sutton united": "sutton utd",
     "tauro ii": "tauro fc res",
+    "thanawat thirapongpaiboon": "thanawat tirapongpaiboon",
     "tochigi city": "tochigi uva fc",
     "tokyo verdy": "tokyo v",
     "top oss": "fc oss",
@@ -7177,6 +7186,31 @@ if (!hit) continue;
     // Diagnose, falls kein Event matcht (Teamnamen-Diff).
     const stBf = {};
     const lays = await bfLays(comp, log, stBf, { onlyEvent: pinTeams }).catch(() => []);
+    // v8.79.13: Auch OHNE BF-Event die PIN-ML-Legs als Kanaele liefern
+    // (analog h2h-Zweig v8.79.5) — der Boost-Arb kann das Komplement trotzdem
+    // bei PIN backen (V2 = Back-Komplement @ PIN), auch wenn kein BF-Lay
+    // existiert. Der CS-Pfad hatte hier nur `return out` ohne einen einzigen
+    // Kanal — der Boost-Check meldete „kein verwandter Markt im Scan",
+    // obwohl die PIN-ML-Preise (mo3 H/D/A) vorlagen (analog zum FIBA-Fall,
+    // der im h2h-Zweig schon v8.79.5 gefixt wurde).
+    const pinOnlyMlKanaele = async () => {
+      const st = await fetchStraight(h.id, log, 'why', () => {}, null)
+        .catch(() => null) || [];
+      const mk = st.find(m => /^moneyline$/i.test(String(m.type || '')) &&
+        Number(m.period) === 0);
+      if (!mk) return 0;
+      const px = pinPrices(mk);
+      const a = toDecU(px['home']), d = toDecU(px['draw'] || px['tie']),
+        bb = toDecU(px['away']);
+      let n = 0;
+      if (a > 1.01) { add('mo3 H', a, null, 'PIN ML', 'BF kein Event',
+        'V2: Back-Komplement @ PIN moeglich'); n++; }
+      if (d > 1.01) { add('mo3 D', d, null, 'PIN ML', 'BF kein Event',
+        'V2: Back-Komplement @ PIN moeglich'); n++; }
+      if (bb > 1.01) { add('mo3 B', bb, null, 'PIN ML', 'BF kein Event',
+        'V2: Back-Komplement @ PIN moeglich'); n++; }
+      return n;
+    };
     if (!lays.length) {
       const evNames = stBf.bfEventNames || [];
       if (evNames.length && stBf.bfFilterBefore !== undefined) {
@@ -7188,12 +7222,20 @@ if (!hit) continue;
         const hint = 'BF-Events dieser COMP (erste ' + evNames.length + '): ' +
           evNames.join(' | ');
         out.reasons.push('kein BF-Event (Teamnamen-Diff) — ' + hint);
+        const pinOnlyN = await pinOnlyMlKanaele();
+        if (pinOnlyN)
+          log('  PIN-only ML-Kanaele (mo3 H/D/A): ' + pinOnlyN +
+            ' — V2 Back-Komplement @ PIN ohne BF-Event moeglich');
         return out;
       }
       log('=== BF-Lays leer fuer ' + comp);
       log('  Hinweis: bfLays braucht die Betfair-Seite im Browser (fetch gegen betfair.com).');
       log('  Oeffne eine Betfair-Seite (z.B. ' + comp + ') in einem Tab, damit der BF-Abruf klappt.');
       out.reasons.push('BF leer (Betfair-Seite im Browser offen? bfLays braucht betfair.com-Zugriff)');
+      const pinOnlyN = await pinOnlyMlKanaele();
+      if (pinOnlyN)
+        log('  PIN-only ML-Kanaele (mo3 H/D/A): ' + pinOnlyN +
+          ' — V2 Back-Komplement @ PIN ohne BF-Event moeglich');
       return out;
     }
     const bs = lays;  // bfLays hat bereits auf das Event gefiltert
@@ -10018,6 +10060,27 @@ for (const cp of crossPairs2) {
       return { pin: 0, bf: 0, hit: 0 };
     }
     if (!bf.mo.length && !(bf.sb || []).length && !(bf.sw || []).length && !(bf.ou || []).length && !(bf.oe || []).length && !(bf.gd || []).length) {
+      // v8.79.13: Auch bei komplett leerer BF-COMP die PIN-only-Rows fuer den
+      // DB-Schnellpfad schreiben (alle PIN-Spiele sind ohne BF-Event) — sonst
+      // braucht der Boost-Check diese Ligen immer den Browser-why-Pull.
+      let pinOnlyN = 0;
+      for (const p of Object.values(pin)) {
+        const a = (p.back || [])[0], bb = (p.back || [])[1];
+        const nm = (p.teams || []).filter(Boolean).join(' v ');
+        if (a > 1.01) {
+          pushRow(rows, lid, { name: nm, hit: p, b: null,
+            kind: 'blA', back: a, src: 'PIN A (kein BF-Event)', lay: 0, vol: 0 });
+          pinOnlyN++;
+        }
+        if (bb > 1.01) {
+          pushRow(rows, lid, { name: nm, hit: p, b: null,
+            kind: 'blB', back: bb, src: 'PIN B (kein BF-Event)', lay: 0, vol: 0 });
+          pinOnlyN++;
+        }
+      }
+      if (pinOnlyN)
+        log('  DEBUG PIN-only blA/blB-Rows[' + lid + ']: ' + pinOnlyN +
+          ' (keine BF-Maerkte — DB-Schnellpfad statt why-Pull)');
       log('  => 0 gematcht (keine BF-Maerkte)');
       return { pin: Object.keys(pin).length, bf: 0, hit: 0 };
     }
@@ -10068,6 +10131,15 @@ for (const cp of crossPairs2) {
       let hit = 0, skipped = 0;
       const leagueW = womenMark(H2H_NAMEN[lid] || '');
       const bbSeen = new Map();  // key -> idx in rows (BB-Dedup)
+      // v8.79.13: PIN-only-Rows fuer Spiele OHNE BF-Event (DB-Schnellpfad).
+      // PIN-Spiele, zu denen Betfair kein Match-Odds-Event fuehrt (z.B. FIBA-
+      // Fall „Belgium v Germany" 2026-09-09), bekamen bisher KEINE blA/blB-
+      // Rows — der Boost-Check musste fuer sie immer den Browser-why-Pull
+      // machen, obwohl die PIN-Backs schon in der DB lagen. Der why-Pull
+      // liefert in genau diesem Fall die Kanaele mit pinBack + bfLay=null
+      // (v8.79.5, V2: Back-Komplement @ PIN); die DB-Rows (back=X, lay=0)
+      // bedienen den DB-Schnellpfad identisch (analog BF-only-pts v8.70.1).
+      const moMatched = new Set();  // PIN-IDs mit BF-Match-Odds-Event
       for (const b of bf.mo) {
         const nb = norm(b.name);
         // Nur explizit markierte Gegengeschlecht-Events ueberspringen:
@@ -10082,6 +10154,7 @@ for (const cp of crossPairs2) {
           kind: 'h2h', back: 0, lay: 0, vol: 0, live: null });
         continue;
       }
+      moMatched.add(h.id);
       let x = null, y = null;
       const s1 = mScore(h.teams[0], b.r0) + mScore(h.teams[1], b.r1);
       const s2 = mScore(h.teams[0], b.r1) + mScore(h.teams[1], b.r0);
@@ -10160,6 +10233,29 @@ for (const cp of crossPairs2) {
       log('  DEBUG NAMEN PIN: ' + Object.values(pin).slice(0, 3)
         .map(p => p.teams.join(' v ')).join(' | '));
     }
+    // v8.79.13: PIN-only-Rows (back=X, lay=0) fuer h2h-Spiele ohne BF-Event
+    // emittieren (siehe Kommentar oben an der mo-Schleife). Nur Spiele mit
+    // handelbaren PIN-Backs; die normalen blA/blB-Rows mit BF-Lay bleiben
+    // unveraendert (moMatched-Set). xback bleibt 0 — es gibt keinen BF-Back.
+    let pinOnlyN = 0;
+    for (const p of Object.values(pin)) {
+      if (moMatched.has(p.id)) continue;
+      const a = (p.back || [])[0], bb = (p.back || [])[1];
+      const nm = (p.teams || []).filter(Boolean).join(' v ');
+      if (a > 1.01) {
+        pushRow(rows, lid, { name: nm, hit: p, b: null,
+          kind: 'blA', back: a, src: 'PIN A (kein BF-Event)', lay: 0, vol: 0 });
+        pinOnlyN++;
+      }
+      if (bb > 1.01) {
+        pushRow(rows, lid, { name: nm, hit: p, b: null,
+          kind: 'blB', back: bb, src: 'PIN B (kein BF-Event)', lay: 0, vol: 0 });
+        pinOnlyN++;
+      }
+    }
+    if (pinOnlyN)
+      log('  DEBUG PIN-only blA/blB-Rows[' + lid + ']: ' + pinOnlyN +
+        ' (Spiele ohne BF-Event — DB-Schnellpfad statt why-Pull)');
     let sbHit = 0;
     for (const sb of bf.sb || []) {
       const nb = norm(sb.name);

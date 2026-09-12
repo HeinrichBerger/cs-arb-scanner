@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.83.1
+// @version      8.83.2
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -178,6 +178,7 @@
     "boston united": "boston utd",
     "cambuur leeuwaarden": "cambuur leeuwarden",
     "celta vigo ii": "celta vigo b",
+    "charlton athletic": "charlton w",
     "chernomorets 1919 burgas": "chernomorets bourgas",
     "chungbuk cheongju": "cheongju fc",
     "club america": "cf america",
@@ -213,6 +214,7 @@
     "gloria bistrita": "cs bistrita",
     "grasshopper club zurich": "grasshoppers zurich",
     "guarani par": "club guarani",
+    "guyana amazon warriors": "guyana amazon war w",
     "hantharwady united": "hanthawaddy united fc",
     "hearts ii": "hearts b",
     "hertha bsc": "hertha berlin",
@@ -232,6 +234,7 @@
     "joe o connor": "joe oconnor",
     "juventus next gen": "juventus b",
     "kagoshima united": "kagoshima utd",
+    "kaisar kyzylorda": "fk kaisar",
     "kansas city current": "kansas city w",
     karlsruher: "karlsruhe",
     "khor fakkan club": "al khaleej khor fakkan",
@@ -243,6 +246,7 @@
     "levadia tallinn": "fci tallinn",
     "lokomotiv gorna oryahovitsa": "lokomotiv go",
     "los angeles galaxy": "la galaxy",
+    "louisville city": "louisville fc",
     "ludogorets razgrad ii": "ludogorets razgrad b",
     "m'gladbach": "borussia monchengladbach",
     "maardu linnameeskond": "fc maardu",
@@ -254,6 +258,7 @@
     "metalist 1925 kharkiv": "fc kharkiv",
     mgladbach: "borussia monchengladbach",
     "minnesota united": "minnesota utd",
+    "mohammedan reserves": "mohammedan sc res",
     "mornar bar": "fk mornar",
     "nacional asuncion": "nacional par",
     "nacional de football": "nacional uru",
@@ -295,6 +300,7 @@
     "sd atletico nacional": "atletico nacional pan",
     "seraing utd": "seraing",
     "sfk 2000 sarajevo": "sfa 2000 sarajevo w",
+    "shanghai segenda": "shanghai second",
     "sheffield wednesday": "sheff wed",
     "sint truidense": "sint truiden",
     "sk slovan bratislava": "slovan bratislava u19",

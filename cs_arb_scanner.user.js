@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.84.1
+// @version      8.84.2
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -11046,7 +11046,17 @@ for (const cp of crossPairs2) {
     if (/atp|wta|tennis|us open|grand slam|mixed doubles|australian open|french open|roland garros|wimbledon/.test(n)) return 'Tennis';
     if (/basketball|baloncesto|fiba|\bnbl\b|wnba|\bnba\b|\bpba\b|\bkbl\b|governors cup/.test(n)) return 'Basketball';
     if (/cricket|the hundred|one day|twenty20|\bt20\b|test match|test matches|t20i|ipl|\bcpl\b|caribbean premier|\bbbl\b|big bash|pakistan super league|\blpl\b|lanka premier|\bsa20\b|\bilt20\b|county championship|marsh cup/.test(n)) return 'Cricket';
-    if (/esport|cs:go|counter[- ]?strike|league of legends|dota|valorant/.test(n)) return 'Esports';
+    // v8.84.2: CS2-Ligen („CS2 - CCT European Series 8", „CS2 - FISSURE
+    // Playground", „CS2 - TP World Championship Qualifier") fielen durch —
+    // die Regex kannte nur „cs:go". Ohne Treffer liefen sie in den
+    // H2H-Rugby-Fallback (`H2H_NAMEN[lid]`), und weil Rugby in
+    // HALBZEIT_2W_SPORT steht, entstanden fuer CS2-Spiele falsche
+    // „1. Halbzeit"-Zeilen (bl1hA/bl1hB) — bei CS2 ist PIN-period 1 eine
+    // Map/Runde (User-Befund 12.09.2026). Weitere Esports-Marker
+    // (ESL Pro League, BLAST Premier, IEM, Rocket League, Overwatch,
+    // StarCraft) gleich mit aufgenommen, damit dieselbe Fehlklassifikation
+    // dort nicht wieder auftritt.
+    if (/esport|\bcs ?2\b|\bcs ?:? ?go\b|counter[- ]?strike|league of legends|dota|valorant|esl pro league|blast premier|\biem\b|rocket league|overwatch|starcraft/.test(n)) return 'Esports';
     if (/baseball|\bmlb\b|\bnpb\b|\bkbo\b/.test(n)) return 'Baseball';
     if (/hockey|\bnhl\b|\bkhl\b/.test(n)) return 'Ice Hockey';
     if (/volleyball/.test(n)) return 'Volleyball';

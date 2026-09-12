@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.84.3
+// @version      8.84.5
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -4086,6 +4086,22 @@
   // h2hRoundSiblings ohne ui.js-Zugriff darauf arbeiten koennen).
   let lastActive = [];
 
+  // v8.84.4: Autoritative Sport-Quelle fuer sportVonLiga (main.js). Der Walk in
+  // discovery() kennt Pinnacles eigene Sport-Zuordnung je Liga ("Snooker
+  // (sid 28)", "Rugby Union (sid 27)", "Volleyball (sid 34)"); hier wird sie als
+  // pid -> PIN-sport-id festgehalten. Befuellt wird sie in discovery() (je
+  // Sportart) und beim Restore aus localStorage in ui.js (walkSidsNeu()).
+  // Pinnacle-pids sind stabil — ein aelterer Walk bleibt daher gueltig.
+  const WALK_SID = new Map();
+
+  // Baut WALK_SID aus lastActive neu auf (Restore-Pfad nach Seiten-Reload).
+  function walkSidsNeu() {
+    WALK_SID.clear();
+    for (const sa of lastActive) {
+      for (const L of (sa.leagues || [])) WALK_SID.set(String(L.id), sa.sid);
+    }
+  }
+
   // ---------- H2H-Turnier-Remap (Runden-Wechsel selbst heilen) ----------
   // Pinnacle vergibt fuer Turnier-Sportarten je Runde ein NEUES lid (z.B.
   // Tennis "ATP Montreal - R1" (221308) -> "ATP Montreal - R16" (221310)),
@@ -4257,6 +4273,7 @@ async function autoTourLid(lid, comp, log) {
     // Zusammenfassung ("Bereits gemappt") laengst veraltete Ligen mehrfach
     // zaehlte und das "Manuell mappen"-Dropdown alte PIDs zeigte.
     lastActive = [];
+    WALK_SID.clear();   // v8.84.4: zusammen mit lastActive neu aufbauen
     for (const sp of sports) {
       const leagues = await getLeaguesCached(sp.sid, 0);
       if (!leagues || !leagues.length) { log('  ' + sp.name + ': keine Ligen'); continue; }
@@ -4264,6 +4281,9 @@ async function autoTourLid(lid, comp, log) {
       log('  ' + sp.name + ' (sid ' + sp.sid + '): ' + act.length + ' aktive Ligen: ' +
         act.map(x => x.name + ' (pid ' + x.id + ')').join(' | '));
       lastActive.push({ sid: sp.sid, name: sp.name, leagues: act });
+      // v8.84.4: Pinnacles Sport-Zuordnung der aktiven Ligen festhalten
+      // (autoritative Quelle fuer sportVonLiga, siehe WALK_SID oben).
+      for (const L of act) WALK_SID.set(String(L.id), sp.sid);
       try { localStorage.setItem('vbsb_csarb_lastactive', JSON.stringify(lastActive)); } catch (e) {}
       const todo = act.filter(L => !isMapped(L.id));
       if (todo.length < act.length)
@@ -5573,7 +5593,7 @@ async function autoTourLid(lid, comp, log) {
     const log = devlog;
     const SIDS = { soccer:29, tennis:33, basketball:4, baseball:3, handball:18,
       volleyball:34, cricket:8, rugby_league:26, rugby_union:27, boxing:6,
-      mma:22, table_tennis:32, darts:10, snooker:25 };
+      mma:22, table_tennis:32, darts:10, snooker:28 };
     const sid = SIDS[(sport||'').toLowerCase()] || 29;
     log('PIN-Snapshot: sport=' + (sport||'soccer') + ' (sid=' + sid + ')');
 
@@ -5600,7 +5620,7 @@ async function autoTourLid(lid, comp, log) {
     const log = devlog;
     const SIDS = { soccer:29, tennis:33, basketball:4, baseball:3, handball:18,
       volleyball:34, cricket:8, rugby_league:26, rugby_union:27, boxing:6,
-      mma:22, table_tennis:32, darts:10, snooker:25 };
+      mma:22, table_tennis:32, darts:10, snooker:28 };
     const sid = SIDS[(sport||'').toLowerCase()] || 29;
     log('PIN-Events: sport=' + (sport||'soccer') + ' (sid=' + sid + ')');
 
@@ -5886,7 +5906,7 @@ async function autoTourLid(lid, comp, log) {
     const sname = (sport || 'soccer').toLowerCase();
     const PIN_SIDS = { soccer:29, tennis:33, basketball:4, baseball:3, handball:18,
       volleyball:34, cricket:8, rugby_league:26, rugby_union:27, boxing:6,
-      mma:22, table_tennis:32, darts:10, snooker:25 };
+      mma:22, table_tennis:32, darts:10, snooker:28 };
     const sid = PIN_SIDS[sname] || 29;
     const budget = Math.min((o.budget || 600) | 0, 1500);   // Call-Limit (Sicherheitsgrenze)
     const ligaMax = ((o.liga ?? o.leagues ?? 0) | 0);       // 0 => alle Ligen
@@ -6015,7 +6035,7 @@ async function autoTourLid(lid, comp, log) {
     } catch (e) { o = {}; }
     const PIN_SIDS = { soccer:29, tennis:33, basketball:4, baseball:3, handball:18,
       volleyball:34, cricket:8, rugby_league:26, rugby_union:27, boxing:6,
-      mma:22, table_tennis:32, darts:10, snooker:25 };
+      mma:22, table_tennis:32, darts:10, snooker:28 };
     const sname = (sport || 'soccer').toLowerCase();
     const pinSid = PIN_SIDS[sname] || 29;
     const bfSid = bfSportId(sname);
@@ -6318,7 +6338,8 @@ if (!hit) continue;
     const SID = (mu.sportId) || '';
     const PIN_SPORT_SIDS = { 29: 'soccer', 33: 'tennis', 4: 'basketball', 3: 'baseball',
       18: 'handball', 34: 'volleyball', 8: 'cricket', 26: 'rugby_league',
-      27: 'rugby_union', 6: 'boxing', 22: 'mma', 25: 'snooker', 32: 'table_tennis' };
+      27: 'rugby_union', 6: 'boxing', 22: 'mma', 28: 'snooker', 32: 'table_tennis',
+      37: 'padel_tennis' };  // v8.84.5: Snooker ist PIN-sid 28 (die alte 25 existiert bei Pinnacle nicht, s. BF_SID in main.js); Padel Tennis ergaenzt
     out.sport = PIN_SPORT_SIDS[SID] || String(SID);
     log('=== ' + out.pin.name + ' (Liga ' + (out.pin.leagueId || '?') +
       ', status=' + JSON.stringify(mu.status) + ' isLive=' + mu.isLive +
@@ -6808,7 +6829,11 @@ if (!hit) continue;
     // gegen 3-Wege verglichen. sportVonLiga erkennt 2-Wege-Sportarten erklaert.
     const ZWEI_WEG_SPORT = new Set(['MMA', 'Rugby', 'Aussie Rules', 'Tennis',
       'Basketball', 'Baseball', 'Cricket', 'Ice Hockey', 'Volleyball',
-      'Handball', 'Esports', 'American Football', 'Snooker']);
+      'Handball', 'Esports', 'American Football', 'Snooker',
+      // v8.84.5: Diese Werte kommen jetzt ebenfalls aus PIN_SID_SPORT
+      // (main.js) — die Menge soll deren Vokabular spiegeln, sonst landen
+      // marke-lose Ligen dieser Sportarten im 3-Wege-CS-Pfad.
+      'Darts', 'Table Tennis', 'Padel Tennis']);
     const isH2H = !!H2H[String(lid)] || ZWEI_WEG_SPORT.has(lidSport);
     if (isH2H) {
       const pinH = await pinH2H(lid, log, {}).catch(() => ({}));
@@ -10186,6 +10211,11 @@ for (const cp of crossPairs2) {
           // Sport und faellt bei marker-losen Namen auf 'Rugby' zurueck).
           const succPsid = MAP_PSID[lid];
           if (succPsid !== undefined) MAP_PSID[succ.lid] = succPsid;
+          // v8.84.4: Walk-Sport der Vorrunde auf die Folge-Runde uebernehmen
+          // (gleiches Turnier, gleicher Sport — der neue lid war im Walk noch
+          // nicht enthalten).
+          const succWsid = WALK_SID.get(String(lid));
+          if (succWsid !== undefined) WALK_SID.set(String(succ.lid), succWsid);
           try { localStorage.setItem('vbsb_csarb_map2',
             JSON.stringify({ leagues: H2H, names: H2H_NAMEN })); } catch (e) {}
           try {
@@ -11067,9 +11097,32 @@ for (const cp of crossPairs2) {
     // falscher 1.-HZ-Zeilen (bl1hA/bl1hB) — genau die CS2-Fehlerklasse v8.84.2.
     // Der frueher genutzte bfNodeCache-Pfad (BF_ET_SPORT[info.effSid]) bleibt
     // als Rueckfall erhalten, ist aber nur in der Discovery-Session warm.
-    const _bs = BF_SID[MAP_PSID[lid]];
-    const _sp = _bs !== undefined ? BF_ET_SPORT[_bs] : undefined;
-    if (_sp) return _sp;
+    //
+    // v8.84.5: Der Sportname kommt aus PIN_SID_SPORT (PIN-Sport-ID -> Name)
+    // statt aus der Umkehrung von BF_SID. Grund: BF_SID dient dem Betfair-
+    // Lookup (PIN-Sport -> BF-EventType) und hat fuer Sportarten ohne
+    // BF-Pendant gar keinen Eintrag — „Padel Tennis" (PIN-sid 37, aus dem
+    // Live-Walk 12.09.2026) fiel damit durch beide Wege (MAP_PSID wie
+    // WALK_SID) in den Rugby-Fallback. Da Rugby in HALBZEIT_2W_SPORT steht,
+    // waeren fuer gemappte Padel-Ligen falsche 1.-Satz-Zeilen entstanden
+    // (dieselbe Klasse wie CS2 v8.84.2 / Volleyball v8.84.3).
+    // Die beiden Tabellen bleiben entkoppelt: BF_SID = BF-Lookup,
+    // PIN_SID_SPORT = Anzeige-/Sport-Logik (Abgleich erzwingt der Test
+    // test/sport.test.js „PIN_SID_SPORT deckt BF_SID ab").
+    const _ps = PIN_SID_SPORT[MAP_PSID[lid]];
+    if (_ps) return _ps;
+    // v8.84.4: Pinnacles EIGENE Sport-Zuordnung aus dem Discovery-Walk
+    // (WALK_SID: pid -> PIN-sport-id, gefuellt in discovery.js aus lastActive).
+    // Der Walk fragt Pinnacle je Sportart ab ("Snooker (sid 28)", "Rugby Union
+    // (sid 27)") und ist damit die autoritative Quelle fuer "welche PIN-Maerkte
+    // gehoeren zu dieser Liga" — genau das, was hier sonst aus dem Liga-NAMEN
+    // rekonstruiert werden muss. Reihenfolge: explizite Mapping-Angabe
+    // (MAP_PSID, SSOT) -> Walk-Sport -> Namens-Marker -> bfNodeCache -> Rugby.
+    // Damit ist die Fehlerklasse "marke-lose Liga wird Rugby" (FIBA v8.79.x,
+    // CS2 v8.84.2, Volleyball/Basketball v8.84.3) strukturell geschlossen: sie
+    // greift nur noch, wenn der Walk die Liga nicht kennt.
+    const _wsp = PIN_SID_SPORT[WALK_SID.get(String(lid))];
+    if (_wsp) return _wsp;
     if (/atp|wta|tennis|us open|grand slam|mixed doubles|australian open|french open|roland garros|wimbledon/.test(n)) return 'Tennis';
     if (/basketball|baloncesto|fiba|\bnbl\b|wnba|\bnba\b|\bpba\b|\bkbl\b|governors cup/.test(n)) return 'Basketball';
     if (/cricket|the hundred|one day|twenty20|\bt20\b|test match|test matches|t20i|ipl|\bcpl\b|caribbean premier|\bbbl\b|big bash|pakistan super league|\blpl\b|lanka premier|\bsa20\b|\bilt20\b|county championship|marsh cup/.test(n)) return 'Cricket';
@@ -11570,9 +11623,24 @@ for (const cp of crossPairs2) {
 
   // Pinnacle-Sport-ID -> Betfair-EventType-ID (Suche liefert Wettbewerbe ALLER
   // Sportarten; ohne Filter landen Fremd-Sport-Treffer im Ergebnis)
+  // PIN-Sport-ID -> Sportname (v8.84.5). Single Source of Truth fuer die
+  // SPORT-BENENNUNG in sportVonLiga — bewusst unabhaengig von BF_SID, weil
+  // BF_SID den Betfair-EventType liefert und fuer Sportarten ohne
+  // BF-Pendant (Padel Tennis 37, Table Tennis 32) leer bleibt. Reihenfolge
+  // der Werte = sportVonLiga-Vokabular; 6 (Boxing) -> 'MMA' und 26/27
+  // (Rugby League/Union) -> 'Rugby' wie bisher, 5 (Beach Volleyball) ->
+  // 'Volleyball' (dasselbe Label wie die Namens-Regel /volleyball/).
+  // Quelle: Live-Walk „Sportarten: … (sid N)" aus dem Discovery-Lauf.
+  const PIN_SID_SPORT = {
+    29: 'Soccer', 33: 'Tennis', 3: 'Baseball', 4: 'Basketball',
+    8: 'Cricket', 18: 'Handball', 34: 'Volleyball', 5: 'Volleyball',
+    19: 'Ice Hockey', 15: 'American Football', 39: 'Aussie Rules',
+    22: 'MMA', 6: 'MMA', 12: 'Esports', 27: 'Rugby', 26: 'Rugby',
+    10: 'Darts', 28: 'Snooker', 32: 'Table Tennis', 37: 'Padel Tennis',
+  };
   const BF_SID = { 29: 1, 33: 2, 3: 7511, 4: 7522, 8: 4, 18: 468328, 34: 998917,
     19: 7524, 15: 6423, 39: 61420, 22: 26420387, 6: 6, 12: 27454571, 27: 5, 26: 1477,
-    10: 3503, 25: 6422 };  // Darts: PIN 10 -> BF 3503 (v8.72.0); Snooker: PIN 25 -> BF 6422 (v8.75.0, probematch English Open 197802 -> COMP:11552428)
+    10: 3503, 28: 6422 };  // Darts: PIN 10 -> BF 3503 (v8.72.0); Snooker: PIN 28 -> BF 6422 (v8.84.4: korrigiert von der alten, falschen PIN-Sport-ID 25 — der Live-Walk meldet "Snooker (sid 28): English Open (pid 197802)", und /sports kennt gar kein sid 25)
   // Achtung (reale Betfair-EventType-IDs, per Recherche + Live-Suche verifiziert):
   //   8  (Cricket)        -> 4    (nicht 9/Motor Sport)
   //   3  (Baseball)       -> 7511 (COMP:11196870 MLB; nicht 4)
@@ -11582,7 +11650,9 @@ for (const cp of crossPairs2) {
   //   19 (Ice Hockey)     -> 7524, 15 (Am. Football) -> 6423
   //   39 (Aussie Rules)   -> 61420, 22 (MMA) -> 26420387, 6 (Boxing) -> 6
   //   12 (Esports)        -> 27454571 (kein Arb-Wert, aber sauber mappbar)
-  //   25 (Snooker)        -> 6422  (probematch English Open: PIN 197802 -> COMP:11552428)
+  //   28 (Snooker)        -> 6422  (probematch English Open: PIN 197802 ->
+  //                        COMP:11552428; v8.84.4: die alte Angabe 25 war
+  //                        falsch — /sports meldet Snooker als sid 28)
   // Falsche IDs liessen den Sport-Guard in scoreCands alle Kandidaten verwerfen
   // (name-Miss mit leerem Sample), der Nav-Baum zeigte auf den falschen Sport.
   const BF_SIDS = new Set(Object.values(BF_SID));
@@ -11859,7 +11929,12 @@ for (const cp of crossPairs2) {
 
   try {
     const la = JSON.parse(localStorage.getItem('vbsb_csarb_lastactive') || 'null');
-    if (Array.isArray(la) && la.length) lastActive = la;
+    if (Array.isArray(la) && la.length) {
+      lastActive = la;
+      // v8.84.4: Sport-Zuordnung des gespeicherten Walks wiederherstellen —
+      // sportVonLiga braucht sie schon vor dem ersten Discovery-Lauf.
+      walkSidsNeu();
+    }
   } catch (e) { /* ignorieren */ }
 
   let leagueMapLoaded = false;

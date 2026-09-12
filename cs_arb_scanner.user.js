@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.83.2
+// @version      8.83.3
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -177,6 +177,7 @@
     "bokelj kotor": "fk bokelj",
     "boston united": "boston utd",
     "cambuur leeuwaarden": "cambuur leeuwarden",
+    "ceara sc": "ceara",
     "celta vigo ii": "celta vigo b",
     "charlton athletic": "charlton w",
     "chernomorets 1919 burgas": "chernomorets bourgas",
@@ -206,6 +207,7 @@
     "flora tallinn": "tallinna fc flora",
     "florian nussle": "florian nuessle",
     "fortaleza ceif": "fortaleza fc",
+    "fortaleza ec": "fortaleza",
     "fratria varna": "fc fratria",
     "fsk mariupol": "yarud mariupol",
     "g osaka": "gamba osaka",
@@ -331,6 +333,7 @@
     "walter ferretti": "cd walter ferreti",
     "welwalo adigrat university": "welwalu adigrat",
     "west bromwich albion": "west brom",
+    "wigan athletic": "wigan",
     "william o connor": "william oconnor",
     wolves: "wolverhampton",
     "wsg tirol": "wsg wattens",

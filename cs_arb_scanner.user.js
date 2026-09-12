@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.84.2
+// @version      8.84.3
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -3100,6 +3100,14 @@
 
   const H2H = {};          // Pinnacle-Liga-ID -> Betfair-COMP (2-Wege-Sportarten)
   const H2H_NAMEN = {};
+  // v8.84.3: Pinnacle-Sport-ID je Mapping-Eintrag (optionales Feld "psid" in
+  // league_mapping.json). sportVonLiga braucht den Sport fuer Ligen, deren Name
+  // KEINEN Sport-Marker traegt ("European - Championship" = Volleyball,
+  // "Finland - Suomen Cup" = Basketball): ohne psid fielen sie auf den
+  // generischen H2H-Fallback 'Rugby'. Der frueher genutzte bfNodeCache-Pfad
+  // greift nur in der Session, in der die COMP per Discovery aufgeloest wurde
+  // (danach ist sie gemappt -> nodeInfo wird nie mehr gerufen -> Cache kalt).
+  const MAP_PSID = {};     // Pinnacle-Liga-ID -> Pinnacle-Sport-ID (aus dem Mapping)
 
   // Gemeinsame Mapping-Pruefung (CS-Ligen + H2H-Ligen).
   const isMapped = pid => !!LEAGUES[pid] || !!H2H[pid];
@@ -10173,6 +10181,11 @@ for (const cp of crossPairs2) {
           delete H2H_NAMEN[lid];
           H2H[succ.lid] = comp;
           H2H_NAMEN[succ.lid] = succ.name;
+          // v8.84.3: psid (Pinnacle-Sport-ID) auf die Folge-Runde uebernehmen —
+          // gleiches Turnier, gleicher Sport (sonst verliert die neue pid den
+          // Sport und faellt bei marker-losen Namen auf 'Rugby' zurueck).
+          const succPsid = MAP_PSID[lid];
+          if (succPsid !== undefined) MAP_PSID[succ.lid] = succPsid;
           try { localStorage.setItem('vbsb_csarb_map2',
             JSON.stringify({ leagues: H2H, names: H2H_NAMEN })); } catch (e) {}
           try {
@@ -10184,7 +10197,8 @@ for (const cp of crossPairs2) {
             GM_xmlhttpRequest({
               method: 'POST', url: PIPE + '/league-map',
               headers: { 'Content-Type': 'application/json' },
-              data: JSON.stringify({ merge: true, section: 'h2h', pid: succ.lid, comp: comp, name: succ.name }),
+              data: JSON.stringify({ merge: true, section: 'h2h', pid: succ.lid, comp: comp,
+                name: succ.name, psid: succPsid }),
             });
           } catch (e) { /* App nicht erreichbar */ }
           return scanH2HLeague(succ.lid, comp, log, rows, seen, games);
@@ -11043,6 +11057,19 @@ for (const cp of crossPairs2) {
 
   function sportVonLiga(lid) {
     const n = String(LIGA_NAMEN[lid] || H2H_NAMEN[lid] || '').toLowerCase();
+    // v8.84.3: Explizite Sport-Angabe aus league_mapping.json ("psid" =
+    // Pinnacle-Sport-ID, SSOT) schlaegt jede Namens-Heuristik. Grund: Ligen
+    // ohne Sport-Marker im Namen liefen sonst in den generischen H2H-Fallback
+    // 'Rugby' — konkret User-Befund 12.09.2026: "European - Championship"
+    // (Pinnacle Volleyball, pid 4099) und "Finland - Suomen Cup" (Pinnacle
+    // Basketball, pid 406) galten als Rugby. Folge waere nicht nur ein
+    // falsches Sport-Label, sondern wegen HALBZEIT_2W_SPORT auch das Emittieren
+    // falscher 1.-HZ-Zeilen (bl1hA/bl1hB) — genau die CS2-Fehlerklasse v8.84.2.
+    // Der frueher genutzte bfNodeCache-Pfad (BF_ET_SPORT[info.effSid]) bleibt
+    // als Rueckfall erhalten, ist aber nur in der Discovery-Session warm.
+    const _bs = BF_SID[MAP_PSID[lid]];
+    const _sp = _bs !== undefined ? BF_ET_SPORT[_bs] : undefined;
+    if (_sp) return _sp;
     if (/atp|wta|tennis|us open|grand slam|mixed doubles|australian open|french open|roland garros|wimbledon/.test(n)) return 'Tennis';
     if (/basketball|baloncesto|fiba|\bnbl\b|wnba|\bnba\b|\bpba\b|\bkbl\b|governors cup/.test(n)) return 'Basketball';
     if (/cricket|the hundred|one day|twenty20|\bt20\b|test match|test matches|t20i|ipl|\bcpl\b|caribbean premier|\bbbl\b|big bash|pakistan super league|\blpl\b|lanka premier|\bsa20\b|\bilt20\b|county championship|marsh cup/.test(n)) return 'Cricket';
@@ -11086,7 +11113,19 @@ for (const cp of crossPairs2) {
     // (z.B. "Nations League" — Rugby-Laenderspiele/-Turniere) duerfen NICHT
     // auf den Soccer-Fallback fallen: Soccer laeuft immer ueber die cs-Sektion
     // (3-Wege), die h2h-Sektion ist per Konvention 2-Wege (Boxen, Rugby, …).
-    if (H2H_NAMEN[lid]) return 'Rugby';
+    if (H2H_NAMEN[lid]) {
+      // Diagnose (nur mit ?debug): Diese Liga hat keinen Sport-Marker im Namen
+      // und kein "psid" im Mapping -> sie wird pauschal als Rugby gefuehrt.
+      // Tritt diese Zeile fuer eine Nicht-Rugby-Liga auf, gehoert "psid" in
+      // league_mapping.json (Single Source of Truth).
+      if (DBG) {
+        try {
+          devlog('  DEBUG sportVonLiga[' + lid + '] "' + (H2H_NAMEN[lid] || '') +
+            '": kein Sport-Marker, kein psid -> Fallback Rugby');
+        } catch (e) {}
+      }
+      return 'Rugby';
+    }
     return 'Soccer';
   }
 
@@ -11834,10 +11873,15 @@ for (const cp of crossPairs2) {
   // Namen und pipeDenies. Rueckgabe: Anzahl der CS+H2H-Eintraege im Payload.
   const applyLeagueMapPayload = (d) => {
     let n = 0;
+    // v8.84.3: Optionales Feld "psid" (Pinnacle-Sport-ID) je Mapping-Eintrag ->
+    // MAP_PSID. sportVonLiga nutzt es fuer Ligen, deren Name keinen
+    // Sport-Marker traegt (sonst pauschaler H2H-Fallback 'Rugby').
     if (d.mapping.cs) {
       for (const [pid, info] of Object.entries(d.mapping.cs)) {
         LEAGUES[pid] = info.comp;
         if (info.name) LIGA_NAMEN[pid] = info.name;
+        if (info.psid !== undefined && info.psid !== null && info.psid !== '')
+          MAP_PSID[pid] = Number(info.psid);
         n++;
       }
     }
@@ -11845,6 +11889,8 @@ for (const cp of crossPairs2) {
       for (const [pid, info] of Object.entries(d.mapping.h2h)) {
         H2H[pid] = info.comp;
         if (info.name) H2H_NAMEN[pid] = info.name;
+        if (info.psid !== undefined && info.psid !== null && info.psid !== '')
+          MAP_PSID[pid] = Number(info.psid);
         n++;
       }
     }
@@ -12557,9 +12603,14 @@ for (const cp of crossPairs2) {
           method: 'POST',
           url: PIPE + '/league-map',
           headers: { 'Content-Type': 'application/json' },
-          data: JSON.stringify({ merge: true, section, pid, comp: 'COMP:' + comp, name }),
+          // psid (v8.84.3): Pinnacle-Sport-ID des gewaehlten Sports mitgeben —
+          // damit kennt sportVonLiga den Sport auch bei Ligen ohne
+          // Namens-Marker (z.B. "European - Championship" = Volleyball).
+          data: JSON.stringify({ merge: true, section, pid, comp: 'COMP:' + comp, name,
+            psid: Number(sid) }),
         });
       } catch (e) { /* App nicht erreichbar */ }
+      MAP_PSID[pid] = Number(sid);
       log('Manuell gemappt: ' + name + ' (pid ' + pid + ', sid ' + sid + ') -> COMP:' + comp +
         ' (Map gesamt ' + (Object.keys(LEAGUES).length + Object.keys(H2H).length) + ').');
       manualBox.style.display = 'none';
@@ -12879,12 +12930,15 @@ for (const cp of crossPairs2) {
         H2H_NAMEN[pid] = name;
       }
       const section = sid === 29 ? 'cs' : 'h2h';
+      MAP_PSID[pid] = sid;
       try {
         GM_xmlhttpRequest({
           method: 'POST',
           url: PIPE + '/league-map',
           headers: { 'Content-Type': 'application/json' },
-          data: JSON.stringify({ merge: true, section, pid, comp: 'COMP:' + comp, name }),
+          // psid (v8.84.3): PIN-Sport-ID des Vorschlags mitgeben (SSOT-Feld).
+          data: JSON.stringify({ merge: true, section, pid, comp: 'COMP:' + comp, name,
+            psid: sid }),
         });
       } catch (e) { /* App nicht erreichbar */ }
       log('[Proposal] ' + (p.kind === 'conflict' ? 'Konflikt-Compat gutgeheissen' : 'Uebernommen') +

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.81.3
+// @version      8.84.7
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -48,9 +48,41 @@
   // Pinnacle-Preis-Plausibilitaetscheck: > 1.01 (kein toter Preis) und
   // < 1000 (kein Extrempreis, z.B. back=110 tote Maerkte).
   function isValidPrice(p) { return p > 1.01 && p < 1000; }
+
+  // Platzhalter-Quote (v8.84.1): tote Maerkte liefern exakt 100 bzw. 110 —
+  // dieselbe Konvention kennt die App bereits fuer die DB-Zeilen
+  // (`freiwetten_scanner.DB_PLATZHALTER`/`freiwetten_test_scanner.DB_PLATZHALTER`:
+  // „keine echte Lay/Back in pvb_odds.db"). Solche Werte sind KEINE Quote:
+  // sie duerfen weder als Lay noch als Back (xback/Back-Back-Cross) in eine
+  // Gegenwette wandern. User-Befund 12.09.2026 (HT/FT A/A „Vienna": kein
+  // echter Lay am Markt, in der App stand trotzdem ein Wert in der
+  // Lay-Spalte; mit lay=110 rechnet der Solver eine Schein-Quote).
+  const PLATZHALTER_PREISE = new Set([100, 110]);
+  function isEchteQuote(p) {
+    return isValidPrice(p) && !PLATZHALTER_PREISE.has(Number(p));
+  }
   // Nur wenn der BF-Lay unter dem PIN-Back liegt, kann ein Back-Lay-Arb
   // entstehen (sonst gibt es nie eine Marge).
-  function arbDir(back, lay) { return isValidPrice(back) && lay > 0 && lay < back; }
+  function arbDir(back, lay) { return isEchteQuote(back) && lay > 0 && lay < back; }
+
+  // FULL-TIME-Moneyline aus den PIN-Moneyline-Kandidaten waehlen (v8.84.1).
+  // Regel: die Ganzspiel-ML hat period 0 — eine FEHLENDE period zaehlt als 0
+  // (Pinnacle laesst das Feld bei vielen Sportarten weg). Eine period >= 1 ist
+  // NIE die Ganzspiel-ML: der alte Fallback `|| kandidaten[0]` las bei Rugby
+  // die 1.-HZ-Moneyline (gleicher Marktname „Money Line", nur period 1) als
+  // Fulltime-ML ein (User-Befund 12.09.2026, Rugby Union NZ NPC „Canterbury
+  // v Wellington"). Gibt es keinen period-0-Kandidaten, wird nur bei
+  // EINDEUTIGKEIT (genau ein Kandidat) weitergemacht — sonst null, damit der
+  // Aufrufer das Spiel ueberspringt statt eine falsche Periode zu hechten.
+  function waehleMatchMoneyline(kandidaten) {
+    const list = Array.isArray(kandidaten) ? kandidaten : [];
+    if (!list.length) return null;
+    const periode = m => (m && (m.period === undefined || m.period === null)
+      ? 0 : Number(m.period));
+    const p0 = list.find(m => periode(m) === 0);
+    if (p0) return p0;
+    return list.length === 1 ? list[0] : null;
+  }
 
   // ---------- Edge-Formeln (Snapshots, in Node testbar) ----------
   // Effektive BF-Quote nach Kommission (Back-Back/Cross; mathematisch identisch
@@ -177,7 +209,9 @@
     "bokelj kotor": "fk bokelj",
     "boston united": "boston utd",
     "cambuur leeuwaarden": "cambuur leeuwarden",
+    "ceara sc": "ceara",
     "celta vigo ii": "celta vigo b",
+    "charlton athletic": "charlton w",
     "chernomorets 1919 burgas": "chernomorets bourgas",
     "chungbuk cheongju": "cheongju fc",
     "club america": "cf america",
@@ -205,6 +239,7 @@
     "flora tallinn": "tallinna fc flora",
     "florian nussle": "florian nuessle",
     "fortaleza ceif": "fortaleza fc",
+    "fortaleza ec": "fortaleza",
     "fratria varna": "fc fratria",
     "fsk mariupol": "yarud mariupol",
     "g osaka": "gamba osaka",
@@ -213,6 +248,7 @@
     "gloria bistrita": "cs bistrita",
     "grasshopper club zurich": "grasshoppers zurich",
     "guarani par": "club guarani",
+    "guyana amazon warriors": "guyana amazon war w",
     "hantharwady united": "hanthawaddy united fc",
     "hearts ii": "hearts b",
     "hertha bsc": "hertha berlin",
@@ -232,6 +268,7 @@
     "joe o connor": "joe oconnor",
     "juventus next gen": "juventus b",
     "kagoshima united": "kagoshima utd",
+    "kaisar kyzylorda": "fk kaisar",
     "kansas city current": "kansas city w",
     karlsruher: "karlsruhe",
     "khor fakkan club": "al khaleej khor fakkan",
@@ -243,6 +280,7 @@
     "levadia tallinn": "fci tallinn",
     "lokomotiv gorna oryahovitsa": "lokomotiv go",
     "los angeles galaxy": "la galaxy",
+    "louisville city": "louisville fc",
     "ludogorets razgrad ii": "ludogorets razgrad b",
     "m'gladbach": "borussia monchengladbach",
     "maardu linnameeskond": "fc maardu",
@@ -254,6 +292,7 @@
     "metalist 1925 kharkiv": "fc kharkiv",
     mgladbach: "borussia monchengladbach",
     "minnesota united": "minnesota utd",
+    "mohammedan reserves": "mohammedan sc res",
     "mornar bar": "fk mornar",
     "nacional asuncion": "nacional par",
     "nacional de football": "nacional uru",
@@ -295,6 +334,7 @@
     "sd atletico nacional": "atletico nacional pan",
     "seraing utd": "seraing",
     "sfk 2000 sarajevo": "sfa 2000 sarajevo w",
+    "shanghai segenda": "shanghai second",
     "sheffield wednesday": "sheff wed",
     "sint truidense": "sint truiden",
     "sk slovan bratislava": "slovan bratislava u19",
@@ -325,6 +365,7 @@
     "walter ferretti": "cd walter ferreti",
     "welwalo adigrat university": "welwalu adigrat",
     "west bromwich albion": "west brom",
+    "wigan athletic": "wigan",
     "william o connor": "william oconnor",
     wolves: "wolverhampton",
     "wsg tirol": "wsg wattens",
@@ -726,6 +767,17 @@
       return Number.isInteger(v) && v >= 1 && v <= 30 ? v : DAYS_AHEAD;
     } catch (e) { return DAYS_AHEAD; }
   })();
+
+  // Halbzeit-2-Wege (v8.81.8): Sportarten, bei denen PINs period-1-Moneyline
+  // die "1. Halbzeit" ist (Pinnacle-Konvention: 0 = Spiel, 1 = 1. Halbzeit —
+  // dieselbe Quelle wie HT-1X2 im Soccer und Satz-1-Winner im Tennis). NUR
+  // diese Sportarten bekommen die Kinds bl1hA/bl1hB: bei Tennis/Volleyball
+  // (Satz), Snooker (Frame), Ice Hockey (Drittel), AFL (Viertel) und
+  // Baseball/Cricket (Innings) bedeutet period 1 ETWAS ANDERES — dort darf
+  // kein 1.HZ-Kind entstehen (sonst wird eine Wette auf das falsche Ereignis
+  // gehecht). EINE Quelle fuer scan.js (DB-Pfad) und tools.js (WHY-Pfad).
+  const HALBZEIT_2W_SPORT = new Set(['Basketball', 'American Football',
+    'Rugby', 'Handball']);
 
   // ---------- Tuning-Konstanten ----------
   const PRICE_MATCH_THRESHOLD = 0.5;   // Max. Log-Ratio-Abweichung fuer Preis-Matching
@@ -1740,7 +1792,22 @@
         };
         return [q(ps[0], 'home'), q(ps[1], 'away')];
       };
-      const matchMoneyline = moneylineMs.find(m => Number(m.period) === 0) || moneylineMs[0];
+      // v8.84.1: Ganzspiel-Moneyline strikt ueber period 0 waehlen (Helfer in
+      // matching.js). Der alte Fallback `|| moneylineMs[0]` nahm bei Rugby die
+      // 1.-HZ-Moneyline (gleicher Marktname „Money Line", nur period 1) als
+      // Fulltime-ML — User-Befund 12.09.2026 (Rugby Union NZ NPC „Canterbury
+      // v Wellington"). Bleibt nur eine mehrdeutige Auswahl (mehrere Kandidaten,
+      // keiner mit period 0) uebrig, wird das Spiel uebersprungen statt eine
+      // falsche Periode zu hechten.
+      const matchMoneyline = waehleMatchMoneyline(moneylineMs);
+      if (!matchMoneyline && moneylineMs.length) {
+        nFail++;
+        log('  DEBUG pinH2H keine period-0-Moneyline (Kandidaten=' +
+          moneylineMs.length + ', periods=' +
+          JSON.stringify(moneylineMs.map(m => m.period)) +
+          ') — Spiel uebersprungen: ' + ps.map(x => x.name).join(' | '));
+        continue;
+      }
       const [a, b] = mlPair(matchMoneyline);
       if (!(a > 1.01 && b > 1.01)) {
         nFail++;
@@ -3033,6 +3100,14 @@
 
   const H2H = {};          // Pinnacle-Liga-ID -> Betfair-COMP (2-Wege-Sportarten)
   const H2H_NAMEN = {};
+  // v8.84.3: Pinnacle-Sport-ID je Mapping-Eintrag (optionales Feld "psid" in
+  // league_mapping.json). sportVonLiga braucht den Sport fuer Ligen, deren Name
+  // KEINEN Sport-Marker traegt ("European - Championship" = Volleyball,
+  // "Finland - Suomen Cup" = Basketball): ohne psid fielen sie auf den
+  // generischen H2H-Fallback 'Rugby'. Der frueher genutzte bfNodeCache-Pfad
+  // greift nur in der Session, in der die COMP per Discovery aufgeloest wurde
+  // (danach ist sie gemappt -> nodeInfo wird nie mehr gerufen -> Cache kalt).
+  const MAP_PSID = {};     // Pinnacle-Liga-ID -> Pinnacle-Sport-ID (aus dem Mapping)
 
   // Gemeinsame Mapping-Pruefung (CS-Ligen + H2H-Ligen).
   const isMapped = pid => !!LEAGUES[pid] || !!H2H[pid];
@@ -4011,6 +4086,22 @@
   // h2hRoundSiblings ohne ui.js-Zugriff darauf arbeiten koennen).
   let lastActive = [];
 
+  // v8.84.4: Autoritative Sport-Quelle fuer sportVonLiga (main.js). Der Walk in
+  // discovery() kennt Pinnacles eigene Sport-Zuordnung je Liga ("Snooker
+  // (sid 28)", "Rugby Union (sid 27)", "Volleyball (sid 34)"); hier wird sie als
+  // pid -> PIN-sport-id festgehalten. Befuellt wird sie in discovery() (je
+  // Sportart) und beim Restore aus localStorage in ui.js (walkSidsNeu()).
+  // Pinnacle-pids sind stabil — ein aelterer Walk bleibt daher gueltig.
+  const WALK_SID = new Map();
+
+  // Baut WALK_SID aus lastActive neu auf (Restore-Pfad nach Seiten-Reload).
+  function walkSidsNeu() {
+    WALK_SID.clear();
+    for (const sa of lastActive) {
+      for (const L of (sa.leagues || [])) WALK_SID.set(String(L.id), sa.sid);
+    }
+  }
+
   // ---------- H2H-Turnier-Remap (Runden-Wechsel selbst heilen) ----------
   // Pinnacle vergibt fuer Turnier-Sportarten je Runde ein NEUES lid (z.B.
   // Tennis "ATP Montreal - R1" (221308) -> "ATP Montreal - R16" (221310)),
@@ -4182,6 +4273,7 @@ async function autoTourLid(lid, comp, log) {
     // Zusammenfassung ("Bereits gemappt") laengst veraltete Ligen mehrfach
     // zaehlte und das "Manuell mappen"-Dropdown alte PIDs zeigte.
     lastActive = [];
+    WALK_SID.clear();   // v8.84.4: zusammen mit lastActive neu aufbauen
     for (const sp of sports) {
       const leagues = await getLeaguesCached(sp.sid, 0);
       if (!leagues || !leagues.length) { log('  ' + sp.name + ': keine Ligen'); continue; }
@@ -4189,6 +4281,9 @@ async function autoTourLid(lid, comp, log) {
       log('  ' + sp.name + ' (sid ' + sp.sid + '): ' + act.length + ' aktive Ligen: ' +
         act.map(x => x.name + ' (pid ' + x.id + ')').join(' | '));
       lastActive.push({ sid: sp.sid, name: sp.name, leagues: act });
+      // v8.84.4: Pinnacles Sport-Zuordnung der aktiven Ligen festhalten
+      // (autoritative Quelle fuer sportVonLiga, siehe WALK_SID oben).
+      for (const L of act) WALK_SID.set(String(L.id), sp.sid);
       try { localStorage.setItem('vbsb_csarb_lastactive', JSON.stringify(lastActive)); } catch (e) {}
       const todo = act.filter(L => !isMapped(L.id));
       if (todo.length < act.length)
@@ -5498,7 +5593,7 @@ async function autoTourLid(lid, comp, log) {
     const log = devlog;
     const SIDS = { soccer:29, tennis:33, basketball:4, baseball:3, handball:18,
       volleyball:34, cricket:8, rugby_league:26, rugby_union:27, boxing:6,
-      mma:22, table_tennis:32, darts:10, snooker:25 };
+      mma:22, table_tennis:32, darts:10, snooker:28 };
     const sid = SIDS[(sport||'').toLowerCase()] || 29;
     log('PIN-Snapshot: sport=' + (sport||'soccer') + ' (sid=' + sid + ')');
 
@@ -5525,7 +5620,7 @@ async function autoTourLid(lid, comp, log) {
     const log = devlog;
     const SIDS = { soccer:29, tennis:33, basketball:4, baseball:3, handball:18,
       volleyball:34, cricket:8, rugby_league:26, rugby_union:27, boxing:6,
-      mma:22, table_tennis:32, darts:10, snooker:25 };
+      mma:22, table_tennis:32, darts:10, snooker:28 };
     const sid = SIDS[(sport||'').toLowerCase()] || 29;
     log('PIN-Events: sport=' + (sport||'soccer') + ' (sid=' + sid + ')');
 
@@ -5811,7 +5906,7 @@ async function autoTourLid(lid, comp, log) {
     const sname = (sport || 'soccer').toLowerCase();
     const PIN_SIDS = { soccer:29, tennis:33, basketball:4, baseball:3, handball:18,
       volleyball:34, cricket:8, rugby_league:26, rugby_union:27, boxing:6,
-      mma:22, table_tennis:32, darts:10, snooker:25 };
+      mma:22, table_tennis:32, darts:10, snooker:28 };
     const sid = PIN_SIDS[sname] || 29;
     const budget = Math.min((o.budget || 600) | 0, 1500);   // Call-Limit (Sicherheitsgrenze)
     const ligaMax = ((o.liga ?? o.leagues ?? 0) | 0);       // 0 => alle Ligen
@@ -5940,7 +6035,7 @@ async function autoTourLid(lid, comp, log) {
     } catch (e) { o = {}; }
     const PIN_SIDS = { soccer:29, tennis:33, basketball:4, baseball:3, handball:18,
       volleyball:34, cricket:8, rugby_league:26, rugby_union:27, boxing:6,
-      mma:22, table_tennis:32, darts:10, snooker:25 };
+      mma:22, table_tennis:32, darts:10, snooker:28 };
     const sname = (sport || 'soccer').toLowerCase();
     const pinSid = PIN_SIDS[sname] || 29;
     const bfSid = bfSportId(sname);
@@ -6243,7 +6338,8 @@ if (!hit) continue;
     const SID = (mu.sportId) || '';
     const PIN_SPORT_SIDS = { 29: 'soccer', 33: 'tennis', 4: 'basketball', 3: 'baseball',
       18: 'handball', 34: 'volleyball', 8: 'cricket', 26: 'rugby_league',
-      27: 'rugby_union', 6: 'boxing', 22: 'mma', 25: 'snooker', 32: 'table_tennis' };
+      27: 'rugby_union', 6: 'boxing', 22: 'mma', 28: 'snooker', 32: 'table_tennis',
+      37: 'padel_tennis' };  // v8.84.5: Snooker ist PIN-sid 28 (die alte 25 existiert bei Pinnacle nicht, s. BF_SID in main.js); Padel Tennis ergaenzt
     out.sport = PIN_SPORT_SIDS[SID] || String(SID);
     log('=== ' + out.pin.name + ' (Liga ' + (out.pin.leagueId || '?') +
       ', status=' + JSON.stringify(mu.status) + ' isLive=' + mu.isLive +
@@ -6702,8 +6798,8 @@ if (!hit) continue;
       if (!pinBack) reason.push('KEIN PIN-Back' + (pinTxt ? ' (' + pinTxt + ')' : ''));
       if (bfLay == null) reason.push('KEIN BF-Lay' + (bfTxt ? ' [' + bfTxt + ']' : ''));
       if (pinBack && bfLay != null) {
-        if (!isValidPrice(pinBack)) reason.push('PIN-Back ungueltig (' + pinBack + ')');
-        else if (!isValidPrice(bfLay)) reason.push('BF-Lay ungueltig (' + bfLay + ')');
+        if (!isEchteQuote(pinBack)) reason.push('PIN-Back ungueltig (' + pinBack + ')');
+        else if (!isEchteQuote(bfLay)) reason.push('BF-Lay ungueltig (' + bfLay + ')');
         else if (lockNote) reason.push(lockNote);
         else if (!arbDir(pinBack, bfLay)) reason.push('kein Arb: PIN ' + pinBack.toFixed(2) +
           ' > BF-Lay ' + bfLay.toFixed(2));
@@ -6733,7 +6829,11 @@ if (!hit) continue;
     // gegen 3-Wege verglichen. sportVonLiga erkennt 2-Wege-Sportarten erklaert.
     const ZWEI_WEG_SPORT = new Set(['MMA', 'Rugby', 'Aussie Rules', 'Tennis',
       'Basketball', 'Baseball', 'Cricket', 'Ice Hockey', 'Volleyball',
-      'Handball', 'Esports', 'American Football', 'Snooker']);
+      'Handball', 'Esports', 'American Football', 'Snooker',
+      // v8.84.5: Diese Werte kommen jetzt ebenfalls aus PIN_SID_SPORT
+      // (main.js) — die Menge soll deren Vokabular spiegeln, sonst landen
+      // marke-lose Ligen dieser Sportarten im 3-Wege-CS-Pfad.
+      'Darts', 'Table Tennis', 'Padel Tennis']);
     const isH2H = !!H2H[String(lid)] || ZWEI_WEG_SPORT.has(lidSport);
     if (isH2H) {
       const pinH = await pinH2H(lid, log, {}).catch(() => ({}));
@@ -6917,10 +7017,27 @@ if (!hit) continue;
         // + hadDraw-agnostisch, konsistent zum Scanner).
         add('bl A', a > 1.01 ? a : null, x.lay || null,
           'PIN A (' + h2.teams[0] + ')', 'BF ' + x.nm, '',
-          '', (y && isValidPrice(y.back)) ? y.back : 0);
+          '', (y && isEchteQuote(y.back)) ? y.back : 0);
         add('bl B', bb > 1.01 ? bb : null, y.lay || null,
           'PIN B (' + h2.teams[1] + ')', 'BF ' + y.nm, '',
-          '', (x && isValidPrice(x.back)) ? x.back : 0);
+          '', (x && isEchteQuote(x.back)) ? x.back : 0);
+      }
+      // 1. Halbzeit 2-Wege (v8.81.8): PIN period-1-Moneyline (h2.w[1]) —
+      // Betfair fuehrt im h2h-Pfad KEINEN „1st Half"-Markt (nur Soccer-COMPs
+      // via mo3h) → pinBack gesetzt, bfLay null. Genau dieser Kanal traegt die
+      // Back-Back-Cross-Gegenwette zu Pinnacle (Boost-Arb V2 „Back ¬M @ PIN"),
+      // identisch zum DB-Pfad (scan.js emitHalbzeit2W). Sport-Whitelist aus
+      // config.js — sonst wuerde bei Tennis/Volleyball der Satz-1-Markt
+      // faelschlich als „1. Halbzeit" gemeldet. Bewusst NACH der mo-Schleife
+      // (ein Kanal-Paar je Spiel, nicht je BF-Kandidat).
+      if (HALBZEIT_2W_SPORT.has(lidSport)) {
+        const w1 = h2.w && h2.w[1];
+        if (w1 && w1[0] > 1.01)
+          add('bl1h A', w1[0], null,
+            'PIN 1.HZ A (' + h2.teams[0] + ')', '—');
+        if (w1 && w1[1] > 1.01)
+          add('bl1h B', w1[1], null,
+            'PIN 1.HZ B (' + h2.teams[1] + ')', '—');
       }
       // Tennis-Satz-Score-Kanaele (v8.60.1): der Boost-Arb-Check (tenscore
       // „X gewinnt 2:0/3:0") braucht die Set-Betting-Backs/Lays auch im
@@ -6969,14 +7086,14 @@ if (!hit) continue;
             const p = byTeam[i], opp = byTeam[j];
             // Bo3 (PIN -1.5/+1.5, BF 2-0-Runner)
             const pinMinus15 = (h2.back2 || [])[i];
-            if (p && p.s20 && isValidPrice(pinMinus15) &&
+            if (p && p.s20 && isEchteQuote(pinMinus15) &&
                 p.s20.lay != null) {
               add('s2' + (i === 0 ? 'A' : 'B'), pinMinus15, p.s20.lay,
                 'PIN ' + h2.teams[i] + ' -1.5',
                 'BF ' + h2.teams[i] + ' 2-0 (Lay)', '');
             }
             const pinPlus15 = (h2.back15 || [])[i];
-            if (opp && opp.s20 && isValidPrice(pinPlus15) &&
+            if (opp && opp.s20 && isEchteQuote(pinPlus15) &&
                 opp.s20.back != null) {
               add('sdPlus' + (i === 0 ? 'A' : 'B'), pinPlus15, opp.s20.back,
                 'PIN ' + h2.teams[i] + ' +1.5',
@@ -6984,14 +7101,14 @@ if (!hit) continue;
             }
             // Bo5 / Grand Slam (PIN -2.5/+2.5, BF 3-0-Runner)
             const pinMinus25 = (h2.back25 || [])[i];
-            if (p && p.s30 && isValidPrice(pinMinus25) &&
+            if (p && p.s30 && isEchteQuote(pinMinus25) &&
                 p.s30.lay != null) {
               add('s5' + (i === 0 ? 'A' : 'B'), pinMinus25, p.s30.lay,
                 'PIN ' + h2.teams[i] + ' -2.5',
                 'BF ' + h2.teams[i] + ' 3-0 (Lay)', '');
             }
             const pinPlus25 = (h2.back25plus || [])[i];
-            if (opp && opp.s30 && isValidPrice(pinPlus25) &&
+            if (opp && opp.s30 && isEchteQuote(pinPlus25) &&
                 opp.s30.back != null) {
               add('sd5Plus' + (i === 0 ? 'A' : 'B'), pinPlus25, opp.s30.back,
                 'PIN ' + h2.teams[i] + ' +2.5',
@@ -7004,12 +7121,12 @@ if (!hit) continue;
             const pinMinus15b5 = (h2.back15neg || [])[i];
             if (p && p.s31 && p.s31.lay != null) {
               add('s51' + (i === 0 ? 'A' : 'B'),
-                isValidPrice(pinMinus15b5) ? pinMinus15b5 : null,
+                isEchteQuote(pinMinus15b5) ? pinMinus15b5 : null,
                 p.s31.lay, 'PIN ' + h2.teams[i] + ' -1.5',
                 'BF ' + h2.teams[i] + ' 3-1 (Lay)', '');
             }
             const pinPlus15b5 = (h2.back15 || [])[i];
-            if (p && p.s31 && isValidPrice(pinPlus15b5)) {
+            if (p && p.s31 && isEchteQuote(pinPlus15b5)) {
               add('sd15Plus' + (i === 0 ? 'A' : 'B'), pinPlus15b5,
                 p.s31.lay, 'PIN ' + h2.teams[i] + ' +1.5',
                 'BF ' + h2.teams[i] + ' 3-1 (Lay)', '');
@@ -7025,7 +7142,7 @@ if (!hit) continue;
               if (!t || t.lay == null) continue;
               const pinY = (h2.back || [])[1 - i];
               add('s' + key + (i === 0 ? 'A' : 'B'),
-                isValidPrice(pinY) ? pinY : null, t.lay,
+                isEchteQuote(pinY) ? pinY : null, t.lay,
                 'PIN ' + h2.teams[1 - i] + ' (Moneyline)',
                 'BF ' + h2.teams[i] + ' ' + scoreTxt + ' (Lay)', '');
             }
@@ -7037,18 +7154,18 @@ if (!hit) continue;
           // exakt bei ¬M = 3/4 Sätze). Ungegatet — der Boost-Solver braucht
           // die Quoten im why-Pull (analog s2/s51/sw-Rows).
           if (sb.ns && sb.ns.five && ((sb.ns.five.lay != null &&
-              isValidPrice(sb.ns.five.lay)) || (sb.ns.three &&
-              isValidPrice(sb.ns.three.back) && sb.ns.four &&
-              isValidPrice(sb.ns.four.back)))) {
+              isEchteQuote(sb.ns.five.lay)) || (sb.ns.three &&
+              isEchteQuote(sb.ns.three.back) && sb.ns.four &&
+              isEchteQuote(sb.ns.four.back)))) {
             let so45xb = 0;
             if (sb.ns.three && sb.ns.four &&
-                isValidPrice(sb.ns.three.back) &&
-                isValidPrice(sb.ns.four.back)) {
+                isEchteQuote(sb.ns.three.back) &&
+                isEchteQuote(sb.ns.four.back)) {
               const q3 = sb.ns.three.back, q4 = sb.ns.four.back;
               so45xb = 1 / (1 / q3 + 1 / q4);
             }
             add('so45', null,
-              (sb.ns.five.lay != null && isValidPrice(sb.ns.five.lay))
+              (sb.ns.five.lay != null && isEchteQuote(sb.ns.five.lay))
                 ? sb.ns.five.lay : null,
               '', 'BF Five Sets (Lay) / 3+4 Sets (Back, ¬M)', '', '', so45xb);
           }
@@ -7081,11 +7198,11 @@ if (!hit) continue;
           else if (s2 > s1) { x = sw.r1; y = sw.r0; }
           else continue;
           add('sw' + sw.per + 'A',
-            isValidPrice(wk[0]) ? wk[0] : null, (x && x.lay) || null,
+            isEchteQuote(wk[0]) ? wk[0] : null, (x && x.lay) || null,
             'PIN Satz ' + sw.per + ' ' + h2.teams[0],
             'BF Set ' + sw.per + ' Winner', '');
           add('sw' + sw.per + 'B',
-            isValidPrice(wk[1]) ? wk[1] : null, (y && y.lay) || null,
+            isEchteQuote(wk[1]) ? wk[1] : null, (y && y.lay) || null,
             'PIN Satz ' + sw.per + ' ' + h2.teams[1],
             'BF Set ' + sw.per + ' Winner', '');
         }
@@ -7290,22 +7407,22 @@ if (!hit) continue;
           // als btts Yes/No emittieren (statt Basis-Kanal `btts`), damit die
           // Boost-Arb-Legs bttsY/bttsN die BF-Lay-Quoten finden (v8.60.32).
           add(k + ' Yes', null, b.layYes, 'kein yn-Special', 'BF layYes', '', '',
-            isValidPrice(b.backNo) ? b.backNo : 0);
+            isEchteQuote(b.backNo) ? b.backNo : 0);
           add(k + ' No', null, b.layNo, 'kein yn-Special', 'BF layNo', '', '',
-            isValidPrice(b.backYes) ? b.backYes : 0);
+            isEchteQuote(b.backYes) ? b.backYes : 0);
         } else {
           const r = await pinBtts(yn, b, log).catch(() => null);
           const pre = r && r.pre, bb = r && r.bb;
           const srcPre = pre ? 'PIN BTTS-Spec ' + pre.sid : 'kein Preismatch';
           add(k + ' Yes', pre ? pre.yes : null, b.layYes, srcPre,
             'BF layYes', pre ? 'Score ' + pre.score.toFixed(3) : (bb ? 'BB ' + bb.sid : ''), '',
-            isValidPrice(b.backNo) ? b.backNo : 0);
+            isEchteQuote(b.backNo) ? b.backNo : 0);
           add(k + ' No', pre ? pre.no : null, b.layNo, srcPre,
             'BF layNo', pre ? 'Score ' + pre.score.toFixed(3) : (bb ? 'BB ' + bb.sid : ''), '',
-            isValidPrice(b.backYes) ? b.backYes : 0);
+            isEchteQuote(b.backYes) ? b.backYes : 0);
           // Back-Back-Crosslegs (Gegenwette): PIN-Back der einen Seite + BF-Back
           // der anderen. Hier ist kein Lay im Spiel, daher eigener Edge-Check.
-          if (bb && isValidPrice(bb.yes) && isValidPrice(b.backNo)) {
+          if (bb && isEchteQuote(bb.yes) && isEchteQuote(b.backNo)) {
             const eBb = computeBBEdge(bb.yes, b.backNo);
             const r = eBb > 0 ? 'BB-Edge ' + (eBb * 100).toFixed(1) + '%' : 'kein BB-Edge: ' + (eBb * 100).toFixed(1) + '%';
             const line = '  [bttsBBY] PIN-Yes=' + bb.yes.toFixed(2) + ' BF-No-Back=' + b.backNo.toFixed(2) +
@@ -7314,7 +7431,7 @@ if (!hit) continue;
             out.channels.push({ kind: 'bttsBBY', pinBack: bb.yes, bfLay: b.backNo,
               pinSrc: srcPre + ' Yes + BF No-Back', bfSrc: 'BF No-Back', reason: [r] });
           }
-          if (bb && isValidPrice(bb.no) && isValidPrice(b.backYes)) {
+          if (bb && isEchteQuote(bb.no) && isEchteQuote(b.backYes)) {
             const eBb = computeBBEdge(bb.no, b.backYes);
             const r = eBb > 0 ? 'BB-Edge ' + (eBb * 100).toFixed(1) + '%' : 'kein BB-Edge: ' + (eBb * 100).toFixed(1) + '%';
             const line = '  [bttsBBN] PIN-No=' + bb.no.toFixed(2) + ' BF-Yes-Back=' + b.backYes.toFixed(2) +
@@ -7348,13 +7465,13 @@ if (!hit) continue;
               ' (Range → Over ' + cover.line + ')') :
               (cover.crossOnly ? ' (Exact Goals=0 → Under 0.5)' : '')),
             'BF over', cover.range ? 'Range' : (cover.crossOnly ? 'crossOnly' : ''), '',
-            b.backU > 1.01 && b.backU !== 0 ? b.backU : 0);
-          if (b.layU > 0) add(k + ' U' + b.line, (cover.under > 1.01 ? cover.under : null) || null,
+            isEchteQuote(b.backU) ? b.backU : 0);
+          if (b.layU > 0) add(k + ' U' + b.line, (isEchteQuote(cover.under) ? cover.under : null) || null,
             b.layU, srcName + (cover.range ? (cover.under ? ' (Range → Under ' + cover.line + ')' :
               ' (Range → Over ' + cover.line + ')') :
               (cover.crossOnly ? ' (Exact Goals=0 → Under 0.5)' : '')),
             'BF under', cover.range ? 'Range' : (cover.crossOnly ? 'crossOnly' : ''), '',
-            b.backO > 1.01 && b.backO !== 0 ? b.backO : 0);
+            isEchteQuote(b.backO) ? b.backO : 0);
         }
       } else if (k === 'oe') {
         // Odd/Even: PIN h.oes-Spec -> Back-Preise via pinOeSpecs, BF odd/even-lay
@@ -7366,10 +7483,10 @@ if (!hit) continue;
           const srcOe = pre ? 'PIN OE-Spec ' + pre.sid : 'kein Preismatch';
           add(k + ' Odd', pre ? pre.odd : null, b.odd ? b.odd.lay : null,
             srcOe, 'BF odd lay', '', '',
-            b.even && isValidPrice(b.even.back) ? b.even.back : 0);
+            b.even && isEchteQuote(b.even.back) ? b.even.back : 0);
           add(k + ' Even', pre ? pre.even : null, b.even ? b.even.lay : null,
             srcOe, 'BF even lay', '', '',
-            b.odd && isValidPrice(b.odd.back) ? b.odd.back : 0);
+            b.odd && isEchteQuote(b.odd.back) ? b.odd.back : 0);
         }
       } else if (k === 'dnb') {
         // DNB: PIN straight-DNB-Markt vs BF dnb.home/away
@@ -7426,7 +7543,7 @@ if (!hit) continue;
             { kind: 'dcX2A', p: pX2, bf: bfHomeBack, d: 'PIN DC X2 + BF A' },
             { kind: 'dc12D', p: p12, bf: bfDBack, d: 'PIN DC 12 + BF D' },
           ]) {
-            if (cp.p > 1.01 && cp.bf > 1.01) {
+            if (isEchteQuote(cp.p) && isEchteQuote(cp.bf)) {
               const e = crossBackEdge(cp.p, bfEffQ(cp.bf));
               const r = e > 0 ? 'BB-Edge ' + e.toFixed(2) + '%' :
                 'kein BB-Edge: ' + e.toFixed(2) + '%';
@@ -7456,7 +7573,7 @@ if (!hit) continue;
           { kind: 'B dc1x', p: pinA2, bf: dcBf1x, d: 'PIN A + BF DC 1X' },
           { kind: 'D dc12', p: pinD2, bf: dcBf12, d: 'PIN D + BF DC 12' },
         ]) {
-          if (cp.p > 1.01 && cp.bf > 1.01) {
+          if (isEchteQuote(cp.p) && isEchteQuote(cp.bf)) {
             const e = crossBackEdge(cp.p, bfEffQ(cp.bf));
             const r = e > 0 ? 'BB-Edge ' + e.toFixed(2) + '%' :
               'kein BB-Edge: ' + e.toFixed(2) + '%';
@@ -7574,12 +7691,12 @@ if (!hit) continue;
             bfLayYesSrc = 'BF ' + btswBfKey + ' Lay';
           }
           add(w2nIsHome ? 'w2nH' : 'w2nA', pinYes > 1.01 ? pinYes : null, bfLayYes, pinYesSrc, bfLayYesSrc, '', '',
-            isValidPrice(b.backNo) ? b.backNo : 0);
+            isEchteQuote(b.backNo) ? b.backNo : 0);
           add(w2nIsHome ? 'w2nNoH' : 'w2nNoA', cand.no > 1.01 ? cand.no : null, b.layNo || null, srcW2n, 'BF layNo', '', '',
-            isValidPrice(b.backYes) ? b.backYes : 0);
+            isEchteQuote(b.backYes) ? b.backYes : 0);
           // Back-Back-Crosslegs (Gegenwette): PIN-Back der einen Seite + BF-Back
           // der anderen. Hier ist kein Lay im Spiel, daher eigener Edge-Check.
-          if (isValidPrice(pinYes) && isValidPrice(b.backNo)) {
+          if (isEchteQuote(pinYes) && isEchteQuote(b.backNo)) {
             const eBb = computeBBEdge(pinYes, b.backNo);
             const r = eBb > 0 ? 'BB-Edge ' + (eBb * 100).toFixed(1) + '%' : 'kein BB-Edge: ' + (eBb * 100).toFixed(1) + '%';
             const line = '  [w2nBBY] PIN-Yes=' + pinYes.toFixed(2) + ' BF-No-Back=' + b.backNo.toFixed(2) +
@@ -7588,7 +7705,7 @@ if (!hit) continue;
             out.channels.push({ kind: 'w2nBBY', pinBack: pinYes, bfLay: b.backNo,
               pinSrc: pinYesSrc + ' + BF No-Back', bfSrc: 'BF No-Back', reason: [r] });
           }
-          if (isValidPrice(cand.no) && isValidPrice(b.backYes)) {
+          if (isEchteQuote(cand.no) && isEchteQuote(b.backYes)) {
             const eBb = computeBBEdge(cand.no, b.backYes);
             const r = eBb > 0 ? 'BB-Edge ' + (eBb * 100).toFixed(1) + '%' : 'kein BB-Edge: ' + (eBb * 100).toFixed(1) + '%';
             const line = '  [w2nBBN] PIN-No=' + cand.no.toFixed(2) + ' BF-Yes-Back=' + b.backYes.toFixed(2) +
@@ -7636,7 +7753,10 @@ if (!hit) continue;
               continue;
             }
             hfHit++;
-            add(kind2, out.back, hits[0].lay, srcTxt,
+            // v8.84.1: Platzhalter-Lay (100/110 = toter BF-Markt) ist keine
+            // Quote -> null (sonst zeigt der Boost-Dialog eine Phantom-
+            // Gegenquote; konsistent zum DB-Pfad in scan.js hf-emit).
+            add(kind2, out.back, isEchteQuote(hits[0].lay) ? hits[0].lay : null, srcTxt,
               'BF HT/FT ' + hits[0].nm, '');
           }
           log('  [hf] Pair-Check: ' + hfCand + ' PIN-Outs, ' + hfHit + ' mit BF-Match');
@@ -7680,11 +7800,11 @@ if (!hit) continue;
           if (b.layO > 0) add(k + ' O' + b.line, hf.over > 1.01 ? hf.over : null, b.layO,
             hf.alt ? 'PIN NEITHER/Exact0 (HT U' + b.line + ' alt-Quelle)' : 'PIN HT (period 1)',
             'BF over', hf.alt ? 'alt-Quelle' : '', '',
-            b.backU > 1.01 && b.backU !== 0 ? b.backU : 0);
+            isEchteQuote(b.backU) ? b.backU : 0);
           if (b.layU > 0) add(k + ' U' + b.line, hf.under > 1.01 ? hf.under : null, b.layU,
             hf.alt ? 'PIN NEITHER/Exact0 (HT U' + b.line + ' alt-Quelle)' : 'PIN HT (period 1)',
             'BF under', hf.alt ? 'alt-Quelle' : '', '',
-            b.backO > 1.01 && b.backO !== 0 ? b.backO : 0);
+            isEchteQuote(b.backO) ? b.backO : 0);
         }
       } else if (k === 'ttot') {
         // Team-Totals: PIN team_total period 0 (0.5–2.5 je Team) vs BF
@@ -7735,16 +7855,17 @@ if (!hit) continue;
           } else {
             // Back-Lay: PIN Over/Under vs BF layO/layU
             if (b.layO > 0) add('tt' + String(Math.round(b.line * 10)).padStart(2, '0') + sideChar + 'O',
-              cover.over > 1.01 ? cover.over : null, b.layO,
+              isEchteQuote(cover.over) ? cover.over : null, b.layO,
               'PIN Team ' + sideChar + ' Over ' + b.line, 'BF over', '', '',
-              b.backU > 1.01 && b.backU !== 0 ? b.backU : 0);
+              isEchteQuote(b.backU) ? b.backU : 0);
             if (b.layU > 0) add('tt' + String(Math.round(b.line * 10)).padStart(2, '0') + sideChar + 'U',
-              cover.under > 1.01 ? cover.under : null, b.layU,
+              isEchteQuote(cover.under) ? cover.under : null, b.layU,
               'PIN Team ' + sideChar + ' Under ' + b.line, 'BF under', '', '',
-              b.backO > 1.01 && b.backO !== 0 ? b.backO : 0);
+              isEchteQuote(b.backO) ? b.backO : 0);
             // Back-Back-Crosslegs (analog emitTeamTotalEs)
             const code = String(Math.round(b.line * 10)).padStart(2, '0');
-            if (cover.under > 1.01 && b.backO > 1.01 && b.backO !== 0 &&
+            // v8.84.1: Gate ueber isEchteQuote (keine Platzhalter 100/110)
+            if (isEchteQuote(cover.under) && isEchteQuote(b.backO) &&
               crossBackEdge(cover.under, bfEffQ(b.backO)) > 0) {
               const eBb = crossBackEdge(cover.under, bfEffQ(b.backO));
               const r = 'BB-Edge ' + (eBb * 100).toFixed(1) + '%';
@@ -7755,7 +7876,7 @@ if (!hit) continue;
                 pinBack: cover.under, bfLay: b.backO,
                 pinSrc: 'PIN U ' + b.line + ' + BF O-Back', bfSrc: 'BF Over-Back', reason: [r] });
             }
-            if (cover.over > 1.01 && b.backU > 1.01 && b.backU !== 0 &&
+            if (isEchteQuote(cover.over) && isEchteQuote(b.backU) &&
               crossBackEdge(cover.over, bfEffQ(b.backU)) > 0) {
               const eBb = crossBackEdge(cover.over, bfEffQ(b.backU));
               const r = 'BB-Edge ' + (eBb * 100).toFixed(1) + '%';
@@ -7807,7 +7928,7 @@ if (!hit) continue;
               else continue;
             }
             const bkind = 'btw' + side + (out.yn === 'yes' ? 'Y' : 'N');
-            add(bkind, out.back > 1.01 ? out.back : null, bfLay.lay,
+            add(bkind, isEchteQuote(out.back) ? out.back : null, bfLay.lay,
               'PIN ' + out.yn + '&' + out.team + ' (Spec ' + spec.sid + ')',
               'BF ' + bfKey + ' Lay', '');
             emitted++;
@@ -7850,7 +7971,7 @@ if (!hit) continue;
             const code = String(Math.round(out.line * 10)).padStart(2, '0');
             const bkind = 'ro' + rside + code +
               (out.side === 'over' ? 'O' : 'U');
-            add(bkind, out.back > 1.01 ? out.back : null, bfLay.lay,
+            add(bkind, isEchteQuote(out.back) ? out.back : null, bfLay.lay,
               'PIN ' + out.team + '&' + out.side + ' ' + out.line +
                 ' (Spec ' + spec.sid + ')',
               'BF ' + bfKey + ' Lay', '');
@@ -7894,7 +8015,7 @@ if (!hit) continue;
             }
           }
           // Back-Back-Cross (ptsBB): PIN No + BF Yes-Back
-          if (cand && isValidPrice(cand.no) && isValidPrice(bf.back)) {
+          if (cand && isEchteQuote(cand.no) && isEchteQuote(bf.back)) {
             const eBb = computeBBEdge(cand.no, bf.back);
             const r = eBb > 0 ? 'BB-Edge ' + (eBb * 100).toFixed(1) + '%' :
               'kein BB-Edge: ' + (eBb * 100).toFixed(1) + '%';
@@ -8742,7 +8863,7 @@ if (!hit) continue;
           kind: teamMatch(h.teams[0], b.team) ? 'w2nH' : 'w2nA',
           back: pinYes, src: pinYesSrc + ' / ' + bfLayYesSrc,
           lay: bfLayYes, vol: bfLayYesVol,
-          xback: isValidPrice(b.backNo) ? b.backNo : 0 });
+          xback: isEchteQuote(b.backNo) ? b.backNo : 0 });
       }
       // Back-Lay No-Seite: PIN "No" vs BF "No"-Lay (unabhaengig von Yes-Seite)
       const mNo = tryBL('W2N(No)', 'W2N(No) ' + b.team + ' ' + b.name, cand.no, b.layNo,
@@ -8758,11 +8879,11 @@ if (!hit) continue;
           team: b.team, kind: teamMatch(h.teams[0], b.team) ? 'w2nNoH' : 'w2nNoA',
           back: cand.no, src: 'W2N(No) ' + b.team + ' (Spec ' + cand.sid + ')',
           lay: b.layNo, vol: b.volNo,
-          xback: isValidPrice(b.backYes) ? b.backYes : 0 });
+          xback: isEchteQuote(b.backYes) ? b.backYes : 0 });
       }
       // Cross-Back (Gegenwette): PIN-Yes-Back + BF-No-Back bzw. PIN-No-Back + BF-Yes-Back
       // w2nBBY: der PIN-Yes-Back profitiert vom BTSW-Aequivalent (pinYes).
-      if (isValidPrice(pinYes) && isValidPrice(b.backNo)) {
+      if (isEchteQuote(pinYes) && isEchteQuote(b.backNo)) {
         const eBb = computeBBEdge(pinYes, b.backNo);
         if (eBb > 0) {
           log('  W2N-BB ' + b.team + ' ' + b.name + ': PIN Yes ' + pinYes.toFixed(2) +
@@ -8773,7 +8894,7 @@ if (!hit) continue;
             lay: b.backNo, vol: b.volBNo });
         }
       }
-      if (isValidPrice(cand.no) && isValidPrice(b.backYes)) {
+      if (isEchteQuote(cand.no) && isEchteQuote(b.backYes)) {
         const eBb = computeBBEdge(cand.no, b.backYes);
         if (eBb > 0) {
           log('  W2N-BB ' + b.team + ' ' + b.name + ': PIN No ' + cand.no.toFixed(2) +
@@ -8831,7 +8952,7 @@ if (!hit) continue;
         }
         // Back-Back-Cross (ptsBB): PIN No (trifft nicht) + BF Yes-Back (trifft)
         const cand = pinSpecs.find(p => teamMatch(p.player, player));
-        if (cand && isValidPrice(cand.no) && isValidPrice(bf.back)) {
+        if (cand && isEchteQuote(cand.no) && isEchteQuote(bf.back)) {
           const eBb = computeBBEdge(cand.no, bf.back);
           if (eBb > 0) {
             log('  PTS-BB ' + player + ' ' + b.name + ': PIN No ' + cand.no.toFixed(2) +
@@ -8995,7 +9116,7 @@ if (!hit) continue;
           lay: y.lay, vol: y.volL });
       // BB-Dedup: gleicher Markt kann als Pre-Match + In-Play zweimal kommen.
       const pushTqBB = (kind, src, pinBack, bfBack, bfVol) => {
-        if (!(isValidPrice(pinBack) && isValidPrice(bfBack) &&
+        if (!(isEchteQuote(pinBack) && isEchteQuote(bfBack) &&
           crossBackEdge(pinBack, bfEffQ(bfBack)) > 0)) return;
         const key = b.name + '|' + kind + '|' + pinBack;
         const prev = tqSeen.get(key);
@@ -9030,7 +9151,7 @@ if (!hit) continue;
       // Home = 1 / Home Win / Home Team
       const pinHome = dec(px['home'] || px['1'] || px['home win'] || 0);
       const pinAway = dec(px['away'] || px['2'] || px['away win'] || 0);
-if (pinHome > 1.01 && b.dnb.home) {
+if (isEchteQuote(pinHome) && b.dnb.home) {
         const m = tryBL('DNB-H', 'DNB Home ' + b.name, pinHome, b.dnb.home.lay, b.name, log);
         if (m.ok) {
           log('  DNB Home ' + b.name + ': PIN ' + pinHome.toFixed(2) +
@@ -9040,7 +9161,7 @@ if (pinHome > 1.01 && b.dnb.home) {
             lay: b.dnb.home.lay, vol: b.dnb.home.vol });
         }
       }
-      if (pinAway > 1.01 && b.dnb.away) {
+      if (isEchteQuote(pinAway) && b.dnb.away) {
         const m = tryBL('DNB-A', 'DNB Away ' + b.name, pinAway, b.dnb.away.lay, b.name, log);
         if (m.ok) {
           log('  DNB Away ' + b.name + ': PIN ' + pinAway.toFixed(2) +
@@ -9054,8 +9175,11 @@ if (pinHome > 1.01 && b.dnb.home) {
       // Back-Back-Cross auf das Gegenereignis: Home DNB = Home gewinnt,
       // Away DNB = Away gewinnt; Remis erstattet beide DNB-Legs (0).
       // BF-Kommission: 3% auf Nettogewinn => effektive Back-Odds = 1 + (q-1)*(1-COMM)
-      if (pinHome > 1.01 && pinAway > 1.01 && b.dnb.home && b.dnb.away &&
-          b.dnb.home.back > 1.01 && b.dnb.away.back > 1.01) {
+      // v8.84.1: Quoten-Gates ueber isEchteQuote (keine Platzhalter 100/110) —
+      // sonst wandert ein toter BF-Back als Cross-Gegenquote in die DB.
+      if (isEchteQuote(pinHome) && isEchteQuote(pinAway) &&
+          b.dnb.home && b.dnb.away &&
+          isEchteQuote(b.dnb.home.back) && isEchteQuote(b.dnb.away.back)) {
         const effH = bfEffQ(b.dnb.home.back);
         const effA = bfEffQ(b.dnb.away.back);
         if (effH > 1.01 && effA > 1.01) {
@@ -9206,7 +9330,7 @@ if (pinHome > 1.01 && b.dnb.home) {
           { pinDc: pin12, bfSingle: bfDBack, kind: 'dc12D', desc: 'PIN DC 12 + BF D' },
         ];
         for (const cp of crossPairs) {
-          if (cp.pinDc <= 1.01 || cp.bfSingle <= 1.01) continue;
+          if (!isEchteQuote(cp.pinDc) || !isEchteQuote(cp.bfSingle)) continue;
           const effBf = bfEffQ(cp.bfSingle);
           if (effBf <= 1.01) continue;
           const edge = crossBackEdge(cp.pinDc, effBf);
@@ -9229,7 +9353,7 @@ if (pinHome > 1.01 && b.dnb.home) {
         { pinSingle: pinD, bfDcBack: dcBf12Back, kind: 'D dc12', desc: 'PIN D + BF DC 12' },
       ];
 for (const cp of crossPairs2) {
-        if (cp.pinSingle <= 1.01 || cp.bfDcBack <= 1.01) continue;
+        if (!isEchteQuote(cp.pinSingle) || !isEchteQuote(cp.bfDcBack)) continue;
         const effBf = bfEffQ(cp.bfDcBack);
         if (effBf <= 1.01) continue;
         const edge = crossBackEdge(cp.pinSingle, effBf);
@@ -9306,12 +9430,12 @@ for (const cp of crossPairs2) {
       const bfAwayBack = teamMatch(h.teams[1], mo3Row.layAn) ? mo3Row.backA :
         (teamMatch(h.teams[1], mo3Row.layHn) ? mo3Row.backH : 0);
       for (const c of (h.euhs || [])) {
-        if (c.line !== 1 || !(c.side > 1.01)) continue;
+        if (c.line !== 1 || !isEchteQuote(c.side)) continue;
         const pinLetter = teamMatch(c.team, h.teams[0]) ? 'H' :
           (teamMatch(c.team, h.teams[1]) ? 'A' : '?');
         if (pinLetter === '?') continue;
         const oppBack = pinLetter === 'H' ? bfAwayBack : bfHomeBack;
-        if (!(oppBack > 1.01)) continue;
+        if (!isEchteQuote(oppBack)) continue;
         const effBf = bfEffQ(oppBack);
         if (effBf <= 1.01) continue;
         const edge = crossBackEdge(c.side, effBf);
@@ -9331,7 +9455,7 @@ for (const cp of crossPairs2) {
     for (const { h, b } of btts) {
       const { pre, bb } = await pinBtts(h.yn, b, log);
       // BB-Arb immer pruefen (unabhaengig vom Preismatch)
-      if (bb && isValidPrice(b.backNo) && isValidPrice(bb.yes)) {
+      if (bb && isEchteQuote(b.backNo) && isEchteQuote(bb.yes)) {
         const eBBY = computeBBEdge(bb.yes, b.backNo);
         log('  BTTS BBY ' + b.name + ': PIN Yes ' + bb.yes.toFixed(2) +
           ' + BF No ' + b.backNo.toFixed(2) + ' => Edge ' + (eBBY * 100).toFixed(2) + '%');
@@ -9340,7 +9464,7 @@ for (const cp of crossPairs2) {
             kind: 'bttsBBY', back: bb.yes, src: 'BTTS Yes + BF No (Spec ' + bb.sid + ')',
             lay: b.backNo, vol: b.volBNo });
       }
-      if (bb && isValidPrice(b.backYes) && isValidPrice(bb.no)) {
+      if (bb && isEchteQuote(b.backYes) && isEchteQuote(bb.no)) {
         const eBBN = computeBBEdge(bb.no, b.backYes);
         log('  BTTS BBN ' + b.name + ': PIN No ' + bb.no.toFixed(2) +
           ' + BF Yes ' + b.backYes.toFixed(2) + ' => Edge ' + (eBBN * 100).toFixed(2) + '%');
@@ -9360,13 +9484,13 @@ for (const cp of crossPairs2) {
         pushRow(rows, lid, { name: b.name, hit: h, b,
           kind: 'bttsY', back: pre.yes, src: 'BTTS Yes (Spec ' + pre.sid + ')',
           lay: b.layYes, vol: b.volYes,
-          xback: isValidPrice(b.backNo) ? b.backNo : 0 });
+          xback: isEchteQuote(b.backNo) ? b.backNo : 0 });
       else trackMissed('BTTS-Y', pre.yes, b.layYes, pre.score, b.name);
       if (pre.no > 1.01 && b.layNo > 1.01 && b.layNo < 1000)
         pushRow(rows, lid, { name: b.name, hit: h, b,
           kind: 'bttsN', back: pre.no, src: 'BTTS No (Spec ' + pre.sid + ')',
           lay: b.layNo, vol: b.volNo,
-          xback: isValidPrice(b.backYes) ? b.backYes : 0 });
+          xback: isEchteQuote(b.backYes) ? b.backYes : 0 });
       else trackMissed('BTTS-N', pre.no, b.layNo, pre.score, b.name);
     }
     // ---------- O/U: gemeinsamer Matcher (PIN straight goals vs BF Lays) ----------
@@ -9464,7 +9588,7 @@ for (const cp of crossPairs2) {
         continue;
       }
       const { pre, bb } = await pinOeSpecs(h.oes, b, log);
-      if (bb && isValidPrice(bb.odd) && b.even && isValidPrice(b.even.back)) {
+      if (bb && isEchteQuote(bb.odd) && b.even && isEchteQuote(b.even.back)) {
         const eBBN = computeBBEdge(bb.odd, b.even.back);
         log('  OE BBN ' + b.name + ': PIN Odd ' + bb.odd.toFixed(2) +
           ' + BF Even ' + b.even.back.toFixed(2) + ' => Edge ' + (eBBN * 100).toFixed(2) + '%');
@@ -9474,7 +9598,7 @@ for (const cp of crossPairs2) {
             src: 'PIN Odd + BF Even (Back) (Spec ' + bb.sid + ')',
             lay: b.even.back, vol: b.even.volB || b.even.vol });
       }
-      if (bb && isValidPrice(bb.even) && b.odd && isValidPrice(b.odd.back)) {
+      if (bb && isEchteQuote(bb.even) && b.odd && isEchteQuote(b.odd.back)) {
         const eBBY = computeBBEdge(bb.even, b.odd.back);
         log('  OE BBY ' + b.name + ': PIN Even ' + bb.even.toFixed(2) +
           ' + BF Odd ' + b.odd.back.toFixed(2) + ' => Edge ' + (eBBY * 100).toFixed(2) + '%');
@@ -9491,7 +9615,7 @@ for (const cp of crossPairs2) {
           kind: 'oeY', back: pre.odd,
           src: 'PIN Odd (Spec ' + pre.sid + ')',
           lay: b.odd.lay, vol: b.odd.vol,
-          xback: isValidPrice(b.even.back) ? b.even.back : 0 });
+          xback: isEchteQuote(b.even.back) ? b.even.back : 0 });
       }
       if (pre.even > 1.01 && b.even && arbDir(pre.even, b.even.lay)) {
         oeHits++;
@@ -9499,7 +9623,7 @@ for (const cp of crossPairs2) {
           kind: 'oeN', back: pre.even,
           src: 'PIN Even (Spec ' + pre.sid + ')',
           lay: b.even.lay, vol: b.even.vol,
-          xback: isValidPrice(b.odd.back) ? b.odd.back : 0 });
+          xback: isEchteQuote(b.odd.back) ? b.odd.back : 0 });
       }
     }
     if (oes.length || oeNoSpec)
@@ -9589,13 +9713,13 @@ for (const cp of crossPairs2) {
       const sU = g.nSrc || '';
       // BB-Arb immer pruefen (unabhaengig vom Preismatch); nur emittieren,
       // wenn der Cross eine positive Marge hat (konsistent zu emitOUEs/emitOEs).
-      if (isValidPrice(g.b.backO) && isValidPrice(g.under) &&
+      if (isEchteQuote(g.b.backO) && isEchteQuote(g.under) &&
         crossBackEdge(g.under, bfEffQ(g.b.backO)) > 0) {
         pushRow(rows, lid, { name: g.b.name, hit: g.h, b: g.b,
           kind: 'hfouBB' + code + 'U', back: g.under, src: 'PIN U + BF O HT ' + g.b.line + sU,
           lay: g.b.backO, vol: g.b.volBO });
       }
-      if (isValidPrice(g.b.backU) && isValidPrice(g.over) &&
+      if (isEchteQuote(g.b.backU) && isEchteQuote(g.over) &&
         crossBackEdge(g.over, bfEffQ(g.b.backU)) > 0) {
         pushRow(rows, lid, { name: g.b.name, hit: g.h, b: g.b,
           kind: 'hfouBB' + code + 'O', back: g.over, src: 'PIN O + BF U HT ' + g.b.line,
@@ -9609,7 +9733,7 @@ for (const cp of crossPairs2) {
             kind: 'hfou' + code + 'U', back: g.under,
             src: 'HT O/U ' + g.b.line + ' (Spec ' + g.sid + ')' + sU,
             lay: g.b.layU, vol: g.b.volU,
-            xback: g.b.backO > 1.01 && g.b.backO !== 0 ? g.b.backO : 0 });
+            xback: isEchteQuote(g.b.backO) ? g.b.backO : 0 });
         continue;
       }
       // v8.62.12 (Boost-Quote-Carrier): HT-O/U-Single-Rows auch OHNE
@@ -9622,13 +9746,13 @@ for (const cp of crossPairs2) {
           kind: 'hfou' + code + 'O', back: g.over,
           src: 'HT O/U ' + g.b.line + ' (Spec ' + g.sid + ')',
           lay: g.b.layO, vol: g.b.volO,
-          xback: g.b.backU > 1.01 && g.b.backU !== 0 ? g.b.backU : 0 });
+          xback: isEchteQuote(g.b.backU) ? g.b.backU : 0 });
       if (g.under > 1.01 && g.b.layU > 1.01 && g.b.layU < 1000)
         pushRow(rows, lid, { name: g.b.name, hit: g.h, b: g.b,
           kind: 'hfou' + code + 'U', back: g.under,
           src: 'HT O/U ' + g.b.line + ' (Spec ' + g.sid + ')' + sU,
           lay: g.b.layU, vol: g.b.volU,
-          xback: g.b.backO > 1.01 && g.b.backO !== 0 ? g.b.backO : 0 });
+          xback: isEchteQuote(g.b.backO) ? g.b.backO : 0 });
     }
     // ---------- Match Odds (Full Time + Half Time) — gemeinsame Helfer-Funktion ----------
     async function processMatchOdds(pairs, period, kindPrefix, srcLabel, logFn) {
@@ -9722,7 +9846,7 @@ for (const cp of crossPairs2) {
       if (la.some(x => x === '?') || lc.some(x => x === '?')) return false;
       return la[0] === lc[0] && la[1] === lc[1];
     };
-    let hfCand = 0, hfPushed = 0;
+    let hfCand = 0, hfPushed = 0, hfPlatzhalter = 0;
     for (const { h, b } of hfs) {
       for (const o of h.hfs || []) for (const out of o.outs || []) {
         hfCand++;
@@ -9740,7 +9864,17 @@ for (const cp of crossPairs2) {
         // Reload bis 120 s). Die App-Surebet-Liste zeigt weiterhin nur
         // edge > 0 (pvb_odds_pipe), Nicht-Arb-hf-Rows sind dort unsichtbar,
         // aber fuer den Boost-Check nutzbar.
-        if (!(out.back > 1.01) || !(hfLay > 1.01)) continue;
+        // v8.84.1: Platzhalter-Lays (100/110 = tote BF-Maerkte) sind KEINE
+        // Quote. Bis v8.84.0 wanderten sie als Schein-Lay in die DB (Lay-Spalte
+        // der App zeigte einen Wert, obwohl am Markt kein Lay stand) und der
+        // Boost-Solver rechnete damit eine Phantom-Gegenquote (User-Befund
+        // 12.09.2026: HT/FT A/A „Vienna"). Ohne echte BF-Quote gibt es fuer
+        // hfXX ohnehin keinen Kanal (komp_kinds ist bewusst leer) -> Row
+        // verwerfen statt Scheinwert speichern.
+        if (!(out.back > 1.01) || !isEchteQuote(hfLay)) {
+          if (isValidPrice(hfLay)) hfPlatzhalter++;
+          continue;
+        }
         hfPushed++;
         pushRow(rows, lid, { name: b.name, hit: h, b,
           kind: 'hf' + letters[0] + letters[1], back: out.back,
@@ -9750,7 +9884,8 @@ for (const cp of crossPairs2) {
     }
     if (hfs.length || hfCand)
       log('  DEBUG hf-emit[' + lid + '] Paare=' + hfs.length + ' Kandidaten=' + hfCand +
-        ' gepusht=' + hfPushed);
+        ' gepusht=' + hfPushed +
+        (hfPlatzhalter ? ' | Platzhalter-Lays verworfen=' + hfPlatzhalter : ''));
     const ahDebug = {};
     const relCache = {};
     const relSrcCache = {};
@@ -9930,7 +10065,7 @@ for (const cp of crossPairs2) {
         });
         if (!key) continue;
         const oppBack = b.ah[key].back;
-        if (!(oppBack > 1.01)) continue;
+        if (!isEchteQuote(oppBack)) continue;
         const effBf = bfEffQ(oppBack);
         if (effBf <= 1.01) continue;
         const edge = crossBackEdge(c.side, effBf);
@@ -9957,6 +10092,41 @@ for (const cp of crossPairs2) {
     if (DBG) log('  TIMING[' + lid + '] fetch=' + dtFetch + 'ms match=' + dtMatch + 'ms async=' + dtAsync + 'ms total=' + (tEnd - t0) + 'ms');
     scanTimings.push({ lid, name: LIGA_NAMEN[lid] || lid, fetch: dtFetch,
       match: dtMatch, async: dtAsync, total: tEnd - t0 });
+  }
+
+  // Halbzeit-2-Wege (v8.81.8): PIN period-1-Moneyline = "Sieger 1. Halbzeit",
+  // kinds bl1hA/bl1hB (Boost-Arb-Befund User 11.09.2026: Basketball „France v
+  // Germany", Boost auf die Zweiwegewette 1. HZ — Betfair fuehrt diesen Markt
+  // NICHT als Back/Lay, Gegenwette nur als Back-Back-Cross zu Pinnacle).
+  // Die Sport-Whitelist steht in config.js (HALBZEIT_2W_SPORT) — EINE Quelle
+  // fuer DB-Pfad (hier) und WHY-Pfad (tools.js).
+
+  // Emittiert die 1.HZ-2-Wege-Rows (bl1hA/bl1hB) fuer EIN H2H-Spiel.
+  // Rueckgabe: Anzahl gepushter Rows (fuer die PIN-only-Diagnose).
+  //   p = PIN-Eintrag (mit w[1] = [Heim, Auswaerts]), b = BF-Markt oder null
+  //   hint = Zusatz in src (z.B. 'kein BF-Event').
+  // Es gibt im h2h-Pfad KEINEN BF-1.-HZ-Markt → lay immer 0 (Kanal V2).
+  function emitHalbzeit2W(rows, lid, log, p, b, name, hint) {
+    if (!p || !HALBZEIT_2W_SPORT.has(sportVonLiga(lid))) return 0;
+    const w1 = p.w && p.w[1];
+    if (!w1) return 0;
+    const a = w1[0], bb = w1[1];
+    if (!(a > 1.01) && !(bb > 1.01)) return 0;
+    const tag = hint ? ' (' + hint + ')' : '';
+    let n = 0;
+    if (a > 1.01) {
+      pushRow(rows, lid, { name, hit: p, b, kind: 'bl1hA', back: a,
+        src: 'PIN 1.HZ A' + tag, lay: 0, vol: 0 });
+      n++;
+    }
+    if (bb > 1.01) {
+      pushRow(rows, lid, { name, hit: p, b, kind: 'bl1hB', back: bb,
+        src: 'PIN 1.HZ B' + tag, lay: 0, vol: 0 });
+      n++;
+    }
+    if (DBG) log('  DEBUG 1.HZ[' + lid + '] ' + name + ' ' + a + '/' + bb +
+      ' (PIN period-1-Moneyline = 1. Halbzeit)' + tag);
+    return n;
   }
 
   async function scanH2HLeague(lid, comp, log, rows, seenRen, games) {
@@ -10036,6 +10206,16 @@ for (const cp of crossPairs2) {
           delete H2H_NAMEN[lid];
           H2H[succ.lid] = comp;
           H2H_NAMEN[succ.lid] = succ.name;
+          // v8.84.3: psid (Pinnacle-Sport-ID) auf die Folge-Runde uebernehmen —
+          // gleiches Turnier, gleicher Sport (sonst verliert die neue pid den
+          // Sport und faellt bei marker-losen Namen auf 'Rugby' zurueck).
+          const succPsid = MAP_PSID[lid];
+          if (succPsid !== undefined) MAP_PSID[succ.lid] = succPsid;
+          // v8.84.4: Walk-Sport der Vorrunde auf die Folge-Runde uebernehmen
+          // (gleiches Turnier, gleicher Sport — der neue lid war im Walk noch
+          // nicht enthalten).
+          const succWsid = WALK_SID.get(String(lid));
+          if (succWsid !== undefined) WALK_SID.set(String(succ.lid), succWsid);
           try { localStorage.setItem('vbsb_csarb_map2',
             JSON.stringify({ leagues: H2H, names: H2H_NAMEN })); } catch (e) {}
           try {
@@ -10047,7 +10227,8 @@ for (const cp of crossPairs2) {
             GM_xmlhttpRequest({
               method: 'POST', url: PIPE + '/league-map',
               headers: { 'Content-Type': 'application/json' },
-              data: JSON.stringify({ merge: true, section: 'h2h', pid: succ.lid, comp: comp, name: succ.name }),
+              data: JSON.stringify({ merge: true, section: 'h2h', pid: succ.lid, comp: comp,
+                name: succ.name, psid: succPsid }),
             });
           } catch (e) { /* App nicht erreichbar */ }
           return scanH2HLeague(succ.lid, comp, log, rows, seen, games);
@@ -10077,6 +10258,7 @@ for (const cp of crossPairs2) {
             kind: 'blB', back: bb, src: 'PIN B (kein BF-Event)', lay: 0, vol: 0 });
           pinOnlyN++;
         }
+        pinOnlyN += emitHalbzeit2W(rows, lid, log, p, null, nm, 'kein BF-Event');
       }
       if (pinOnlyN)
         log('  DEBUG PIN-only blA/blB-Rows[' + lid + ']: ' + pinOnlyN +
@@ -10191,14 +10373,21 @@ for (const cp of crossPairs2) {
         // Gegenwette fuer den Boost-Arb („Back ¬M @ BF").
         pushRow(rows, lid, { name: b.name, hit: h, b,
           kind: 'blA', back: a, src: 'PIN A', lay: x.lay, vol: x.volL,
-          xback: y && isValidPrice(y.back) ? y.back : 0 });
+          xback: y && isEchteQuote(y.back) ? y.back : 0 });
       if (bb > 1.01 && y && y.lay > 1.01 && y.lay < 1000)
         pushRow(rows, lid, { name: b.name, hit: h, b,
           kind: 'blB', back: bb, src: 'PIN B', lay: y.lay, vol: y.volL,
-          xback: x && isValidPrice(x.back) ? x.back : 0 });
+          xback: x && isEchteQuote(x.back) ? x.back : 0 });
+      // 1. Halbzeit (2-Wege, v8.81.8) — PIN period-1-Moneyline (h.w[1]).
+      // KEIN BF-Markt im h2h-Pfad (Betfair quotiert „1st Half" nur fuer
+      // Soccer-COMPs ueber mo3h) → lay=0, xback=0. Genau dieser Kanal ist die
+      // „Back-Back-Cross-Gegenwette zu Pinnacle" (Boost V2: PIN-Back der
+      // Gegenseite); ungegatet wie die PIN-only-Rows (v8.79.13), damit der
+      // Boost-Check die Quoten auch ohne Scan-Arb im DB-Schnellpfad hat.
+      emitHalbzeit2W(rows, lid, log, h, b, b.name, null);
       // BB-Dedup: gleicher Markt kann als Pre-Match + In-Play zweimal geliefert werden
       const pushBB = (kind, src, pinBack, bfBack, bfVol) => {
-        if (!(isValidPrice(pinBack) && isValidPrice(bfBack) &&
+        if (!(isEchteQuote(pinBack) && isEchteQuote(bfBack) &&
           crossBackEdge(pinBack, bfEffQ(bfBack)) > 0)) return;
         const key = b.name + '|' + kind + '|' + pinBack;
         const prev = bbSeen.get(key);
@@ -10252,6 +10441,7 @@ for (const cp of crossPairs2) {
           kind: 'blB', back: bb, src: 'PIN B (kein BF-Event)', lay: 0, vol: 0 });
         pinOnlyN++;
       }
+      pinOnlyN += emitHalbzeit2W(rows, lid, log, p, null, nm, 'kein BF-Event');
     }
     if (pinOnlyN)
       log('  DEBUG PIN-only blA/blB-Rows[' + lid + ']: ' + pinOnlyN +
@@ -10281,11 +10471,11 @@ for (const cp of crossPairs2) {
         // den langsamen why-Pull. Die App-Liste zeigt weiterhin nur edge > 0
         // (pvb_odds_pipe), Nicht-Arb-Rows sind dort unsichtbar, aber fuer
         // den Boost-Check nutzbar.
-        if (!s || !isValidPrice(s.s20.lay)) continue;
+        if (!s || !isEchteQuote(s.s20.lay)) continue;
         sbHit++;
         pushRow(rows, lid, { name: sb.name, hit: h, b: sb,
           kind: 's2' + (i === 0 ? 'A' : 'B'),
-          back: isValidPrice(h.back2[i]) ? h.back2[i] : 0,
+          back: isEchteQuote(h.back2[i]) ? h.back2[i] : 0,
           src: 'PIN ' + h.teams[i] + ' -1.5 / BF 2-0',
           lay: s.s20.lay, vol: s.s20.vol });
       }
@@ -10296,7 +10486,7 @@ for (const cp of crossPairs2) {
         const j = 1 - i;
         const pinPlus = (h.back15 || [])[i];
         const opp = layByTeam[j];
-        if (!(isValidPrice(pinPlus) && opp && isValidPrice(opp.s20.back))) continue;
+        if (!(isEchteQuote(pinPlus) && opp && isEchteQuote(opp.s20.back))) continue;
         sbHit++;
         pushRow(rows, lid, { name: sb.name, hit: h, b: sb,
           kind: 'sdPlus' + (i === 0 ? 'A' : 'B'), back: pinPlus,
@@ -10323,7 +10513,7 @@ for (const cp of crossPairs2) {
         const pinPlus = i === 0 ? b25pA : b25pB;          // verliert nicht 0:3
         const t = tByTeam[i];                              // "Team 3-0"-Runner
         const opp = tByTeam[j];                            // "Gegner 3-0"-Runner
-        if (isValidPrice(pinMinus) && t && isValidPrice(t.s30.lay)) {
+        if (isEchteQuote(pinMinus) && t && isEchteQuote(t.s30.lay)) {
           sbHit++;
           pushRow(rows, lid, { name: sb.name, hit: h, b: sb,
             kind: 's5' + (i === 0 ? 'A' : 'B'), back: pinMinus,
@@ -10332,7 +10522,7 @@ for (const cp of crossPairs2) {
         }
         // +2.5-Back (Underdog, "nicht 0:3") <-> BF-Gegner-3:0-Back (Back-Back):
         // verliert der Underdog 0:3, gewinnt der Gegner exakt 3:0.
-        if (isValidPrice(pinPlus) && opp && isValidPrice(opp.s30.back)) {
+        if (isEchteQuote(pinPlus) && opp && isEchteQuote(opp.s30.back)) {
           sbHit++;
           pushRow(rows, lid, { name: sb.name, hit: h, b: sb,
             kind: 'sd5Plus' + (i === 0 ? 'A' : 'B'), back: pinPlus,
@@ -10356,18 +10546,18 @@ for (const cp of crossPairs2) {
       }
       for (const i of [0, 1]) {
         const t31 = t31ByTeam[i];                              // "Team 3-1"-Runner
-        if (!t31 || !isValidPrice(t31.s31.lay)) continue;
+        if (!t31 || !isEchteQuote(t31.s31.lay)) continue;
         const pinMinus15 = (h.back15neg || [])[i];             // X -1.5 (Info)
         sbHit++;
         pushRow(rows, lid, { name: sb.name, hit: h, b: sb,
           kind: 's51' + (i === 0 ? 'A' : 'B'),
-          back: isValidPrice(pinMinus15) ? pinMinus15 : 0,
+          back: isEchteQuote(pinMinus15) ? pinMinus15 : 0,
           src: 'PIN ' + h.teams[i] + ' -1.5 / BF ' + h.teams[i] + ' 3-1 (Lay)',
           lay: t31.s31.lay, vol: t31.s31.vol });
         // +1.5-Back (Gegner holt 2 Sätze oder gewinnt): die Gegen-Seite zu
         // „X 3:1". Zusammen mit dem Lay X 3-1 (s51) der No-Loss-Lock.
         const pinPlus15 = (h.back15 || [])[i];
-        if (isValidPrice(pinPlus15)) {
+        if (isEchteQuote(pinPlus15)) {
           sbHit++;
           pushRow(rows, lid, { name: sb.name, hit: h, b: sb,
             kind: 'sd15Plus' + (i === 0 ? 'A' : 'B'), back: pinPlus15,
@@ -10398,12 +10588,12 @@ for (const cp of crossPairs2) {
         for (const i of [0, 1]) {
           const j = 1 - i;
           const t = tXY[key][i];
-          if (!t || !isValidPrice(t[pf].lay)) continue;
+          if (!t || !isEchteQuote(t[pf].lay)) continue;
           const pinY = (h.back || [])[j];        // Gegner-Moneyline (Y)
           sbHit++;
           pushRow(rows, lid, { name: sb.name, hit: h, b: sb,
             kind: 's' + key + (i === 0 ? 'A' : 'B'),
-            back: isValidPrice(pinY) ? pinY : 0,
+            back: isEchteQuote(pinY) ? pinY : 0,
             src: 'PIN ' + h.teams[j] + ' (Moneyline) / BF ' + h.teams[i] +
               ' ' + scoreTxt + ' (Lay)',
             lay: t[pf].lay, vol: t[pf].vol });
@@ -10454,19 +10644,19 @@ for (const cp of crossPairs2) {
       // besteht (nur fuer den Boost-Arb, kein PvB-Paar — TEN_LOCK_KINDS).
       const ns45 = sb.ns;
       if (ns45 && ns45.five &&
-          ((ns45.five.lay != null && isValidPrice(ns45.five.lay)) ||
-           (ns45.three && ns45.four && isValidPrice(ns45.three.back) &&
-            isValidPrice(ns45.four.back)))) {
+          ((ns45.five.lay != null && isEchteQuote(ns45.five.lay)) ||
+           (ns45.three && ns45.four && isEchteQuote(ns45.three.back) &&
+            isEchteQuote(ns45.four.back)))) {
         let so45xb = 0;
-        if (ns45.three && ns45.four && isValidPrice(ns45.three.back) &&
-            isValidPrice(ns45.four.back)) {
+        if (ns45.three && ns45.four && isEchteQuote(ns45.three.back) &&
+            isEchteQuote(ns45.four.back)) {
           so45xb = 1 / (1 / ns45.three.back + 1 / ns45.four.back);
         }
         sbHit++;
         pushRow(rows, lid, { name: sb.name, hit: h, b: sb,
           kind: 'so45',
           back: 0,
-          lay: (ns45.five.lay != null && isValidPrice(ns45.five.lay))
+          lay: (ns45.five.lay != null && isEchteQuote(ns45.five.lay))
             ? ns45.five.lay : 0,
           src: 'BF Five Sets (Lay) / 3+4 Sets (Back, ¬M)',
           vol: (ns45.five.vol) || 0,
@@ -10492,22 +10682,22 @@ for (const cp of crossPairs2) {
       // oben und wie der why-Pull in tools.js): der Boost-Solver braucht
       // die Set-Winner-Lays/Backs beider Seiten fuer sw1/sw2 im
       // DB-Schnellpfad. swBB (cross) bleibt bewusst arb-gegatet.
-      if (x && isValidPrice(x.lay))
+      if (x && isEchteQuote(x.lay))
         pushRow(rows, lid, { name: sw.name, hit: h, b: sw,
           kind: 'sw' + sw.per + 'A',
-          back: isValidPrice(wk[0]) ? wk[0] : 0,
+          back: isEchteQuote(wk[0]) ? wk[0] : 0,
           src: 'PIN Satz ' + sw.per + ' ' + h.teams[0] + ' / BF Set ' + sw.per + ' Winner',
           lay: x.lay, vol: x.volL });
-      if (y && isValidPrice(y.lay))
+      if (y && isEchteQuote(y.lay))
         pushRow(rows, lid, { name: sw.name, hit: h, b: sw,
           kind: 'sw' + sw.per + 'B',
-          back: isValidPrice(wk[1]) ? wk[1] : 0,
+          back: isEchteQuote(wk[1]) ? wk[1] : 0,
           src: 'PIN Satz ' + sw.per + ' ' + h.teams[1] + ' / BF Set ' + sw.per + ' Winner',
           lay: y.lay, vol: y.volL });
       // Satz-Sieger als Back-Back (cross): "PIN A gewinnt Satz" und
       // "BF B gewinnt Satz" sind komplementaere Ereignisse (wie bbA/bbB).
       const pushSwBB = (pinB, bfB, side) => {
-        if (!(isValidPrice(pinB) && bfB && isValidPrice(bfB.back))) return;
+        if (!(isEchteQuote(pinB) && bfB && isEchteQuote(bfB.back))) return;
         if (crossBackEdge(pinB, bfEffQ(bfB.back)) <= 0) return;
         swHit++;
         const pi = side === 'A' ? 0 : 1;
@@ -10569,7 +10759,7 @@ for (const cp of crossPairs2) {
           lay: gd.no.lay, vol: gd.no.vol });
       }
       // Back-Back-Crosslegs (Gegenwette): PIN-Yes + BF-No-Back, PIN-No + BF-Yes-Back
-      if (isValidPrice(h.fd.yes) && isValidPrice(gd.no.back)) {
+      if (isEchteQuote(h.fd.yes) && isEchteQuote(gd.no.back)) {
         const eBb = computeBBEdge(h.fd.yes, gd.no.back);
         if (eBb > 0) {
           gdHit++;
@@ -10579,7 +10769,7 @@ for (const cp of crossPairs2) {
             lay: gd.no.back, vol: gd.no.volB });
         }
       }
-      if (isValidPrice(h.fd.no) && isValidPrice(gd.yes.back)) {
+      if (isEchteQuote(h.fd.no) && isEchteQuote(gd.yes.back)) {
         const eBb = computeBBEdge(h.fd.no, gd.yes.back);
         if (eBb > 0) {
           gdHit++;
@@ -10629,6 +10819,7 @@ for (const cp of crossPairs2) {
     hcs32: 'HT CS 3:2', hcs23: 'HT CS 2:3', hcs33: 'HT CS 3:3',
     bttsY: 'BTTS Yes', bttsN: 'BTTS No', bttsBBY: 'BTTS BB Yes', bttsBBN: 'BTTS BB No', h2h: 'H2H',
     blA: 'H2H BL A', blB: 'H2H BL B', bbA: 'H2H BB A', bbB: 'H2H BB B',
+    bl1hA: 'H2H 1.HZ BL A', bl1hB: 'H2H 1.HZ BL B',
     tqA: 'To Qualify BL A', tqB: 'To Qualify BL B',
     bbTqA: 'To Qualify BB A', bbTqB: 'To Qualify BB B',
     s2A: 'Set 2:0 A', s2B: 'Set 2:0 B',
@@ -10896,10 +11087,56 @@ for (const cp of crossPairs2) {
 
   function sportVonLiga(lid) {
     const n = String(LIGA_NAMEN[lid] || H2H_NAMEN[lid] || '').toLowerCase();
+    // v8.84.3: Explizite Sport-Angabe aus league_mapping.json ("psid" =
+    // Pinnacle-Sport-ID, SSOT) schlaegt jede Namens-Heuristik. Grund: Ligen
+    // ohne Sport-Marker im Namen liefen sonst in den generischen H2H-Fallback
+    // 'Rugby' — konkret User-Befund 12.09.2026: "European - Championship"
+    // (Pinnacle Volleyball, pid 4099) und "Finland - Suomen Cup" (Pinnacle
+    // Basketball, pid 406) galten als Rugby. Folge waere nicht nur ein
+    // falsches Sport-Label, sondern wegen HALBZEIT_2W_SPORT auch das Emittieren
+    // falscher 1.-HZ-Zeilen (bl1hA/bl1hB) — genau die CS2-Fehlerklasse v8.84.2.
+    // Der frueher genutzte bfNodeCache-Pfad (BF_ET_SPORT[info.effSid]) bleibt
+    // als Rueckfall erhalten, ist aber nur in der Discovery-Session warm.
+    //
+    // v8.84.5: Der Sportname kommt aus PIN_SID_SPORT (PIN-Sport-ID -> Name)
+    // statt aus der Umkehrung von BF_SID. Grund: BF_SID dient dem Betfair-
+    // Lookup (PIN-Sport -> BF-EventType) und hat fuer Sportarten ohne
+    // BF-Pendant gar keinen Eintrag — „Padel Tennis" (PIN-sid 37, aus dem
+    // Live-Walk 12.09.2026) fiel damit durch beide Wege (MAP_PSID wie
+    // WALK_SID) in den Rugby-Fallback. Da Rugby in HALBZEIT_2W_SPORT steht,
+    // waeren fuer gemappte Padel-Ligen falsche 1.-Satz-Zeilen entstanden
+    // (dieselbe Klasse wie CS2 v8.84.2 / Volleyball v8.84.3).
+    // Die beiden Tabellen bleiben entkoppelt: BF_SID = BF-Lookup,
+    // PIN_SID_SPORT = Anzeige-/Sport-Logik (Abgleich erzwingt der Test
+    // test/sport.test.js „PIN_SID_SPORT deckt BF_SID ab").
+    const _ps = PIN_SID_SPORT[MAP_PSID[lid]];
+    if (_ps) return _ps;
+    // v8.84.4: Pinnacles EIGENE Sport-Zuordnung aus dem Discovery-Walk
+    // (WALK_SID: pid -> PIN-sport-id, gefuellt in discovery.js aus lastActive).
+    // Der Walk fragt Pinnacle je Sportart ab ("Snooker (sid 28)", "Rugby Union
+    // (sid 27)") und ist damit die autoritative Quelle fuer "welche PIN-Maerkte
+    // gehoeren zu dieser Liga" — genau das, was hier sonst aus dem Liga-NAMEN
+    // rekonstruiert werden muss. Reihenfolge: explizite Mapping-Angabe
+    // (MAP_PSID, SSOT) -> Walk-Sport -> Namens-Marker -> bfNodeCache -> Rugby.
+    // Damit ist die Fehlerklasse "marke-lose Liga wird Rugby" (FIBA v8.79.x,
+    // CS2 v8.84.2, Volleyball/Basketball v8.84.3) strukturell geschlossen: sie
+    // greift nur noch, wenn der Walk die Liga nicht kennt.
+    const _wsp = PIN_SID_SPORT[WALK_SID.get(String(lid))];
+    if (_wsp) return _wsp;
     if (/atp|wta|tennis|us open|grand slam|mixed doubles|australian open|french open|roland garros|wimbledon/.test(n)) return 'Tennis';
     if (/basketball|baloncesto|fiba|\bnbl\b|wnba|\bnba\b|\bpba\b|\bkbl\b|governors cup/.test(n)) return 'Basketball';
     if (/cricket|the hundred|one day|twenty20|\bt20\b|test match|test matches|t20i|ipl|\bcpl\b|caribbean premier|\bbbl\b|big bash|pakistan super league|\blpl\b|lanka premier|\bsa20\b|\bilt20\b|county championship|marsh cup/.test(n)) return 'Cricket';
-    if (/esport|cs:go|counter[- ]?strike|league of legends|dota|valorant/.test(n)) return 'Esports';
+    // v8.84.2: CS2-Ligen („CS2 - CCT European Series 8", „CS2 - FISSURE
+    // Playground", „CS2 - TP World Championship Qualifier") fielen durch —
+    // die Regex kannte nur „cs:go". Ohne Treffer liefen sie in den
+    // H2H-Rugby-Fallback (`H2H_NAMEN[lid]`), und weil Rugby in
+    // HALBZEIT_2W_SPORT steht, entstanden fuer CS2-Spiele falsche
+    // „1. Halbzeit"-Zeilen (bl1hA/bl1hB) — bei CS2 ist PIN-period 1 eine
+    // Map/Runde (User-Befund 12.09.2026). Weitere Esports-Marker
+    // (ESL Pro League, BLAST Premier, IEM, Rocket League, Overwatch,
+    // StarCraft) gleich mit aufgenommen, damit dieselbe Fehlklassifikation
+    // dort nicht wieder auftritt.
+    if (/esport|\bcs ?2\b|\bcs ?:? ?go\b|counter[- ]?strike|league of legends|dota|valorant|esl pro league|blast premier|\biem\b|rocket league|overwatch|starcraft/.test(n)) return 'Esports';
     if (/baseball|\bmlb\b|\bnpb\b|\bkbo\b/.test(n)) return 'Baseball';
     if (/hockey|\bnhl\b|\bkhl\b/.test(n)) return 'Ice Hockey';
     if (/volleyball/.test(n)) return 'Volleyball';
@@ -10929,7 +11166,19 @@ for (const cp of crossPairs2) {
     // (z.B. "Nations League" — Rugby-Laenderspiele/-Turniere) duerfen NICHT
     // auf den Soccer-Fallback fallen: Soccer laeuft immer ueber die cs-Sektion
     // (3-Wege), die h2h-Sektion ist per Konvention 2-Wege (Boxen, Rugby, …).
-    if (H2H_NAMEN[lid]) return 'Rugby';
+    if (H2H_NAMEN[lid]) {
+      // Diagnose (nur mit ?debug): Diese Liga hat keinen Sport-Marker im Namen
+      // und kein "psid" im Mapping -> sie wird pauschal als Rugby gefuehrt.
+      // Tritt diese Zeile fuer eine Nicht-Rugby-Liga auf, gehoert "psid" in
+      // league_mapping.json (Single Source of Truth).
+      if (DBG) {
+        try {
+          devlog('  DEBUG sportVonLiga[' + lid + '] "' + (H2H_NAMEN[lid] || '') +
+            '": kein Sport-Marker, kein psid -> Fallback Rugby');
+        } catch (e) {}
+      }
+      return 'Rugby';
+    }
     return 'Soccer';
   }
 
@@ -11101,7 +11350,8 @@ for (const cp of crossPairs2) {
       pushRow(rows, lid, { lg: lgName, name: b.name, hit: h, b,
         live: h.live || b.live, kind: 'ou' + code + 'O', back: cover.over,
         src: 'PIN Over ' + b.line, lay: b.over.lay, vol: b.over.vol,
-        xback: (b.under && b.under.back > 1.01 && b.under.back !== 0)
+        // v8.84.1: Platzhalter-Backs (100/110) sind keine Gegenquote
+        xback: (b.under && isEchteQuote(b.under.back))
           ? b.under.back : 0 });
     }
     if (cover.under > 1.01 && b.under && b.under.lay > 1.01 && b.under.lay < 1000) {
@@ -11109,7 +11359,7 @@ for (const cp of crossPairs2) {
       pushRow(rows, lid, { lg: lgName, name: b.name, hit: h, b,
         live: h.live || b.live, kind: 'ou' + code + 'U', back: cover.under,
         src: 'PIN Under ' + b.line, lay: b.under.lay, vol: b.under.vol,
-        xback: (b.over && b.over.back > 1.01 && b.over.back !== 0)
+        xback: (b.over && isEchteQuote(b.over.back))
           ? b.over.back : 0 });
     }
     // BB-Gate: nur emittieren, wenn der Cross eine positive Marge hat
@@ -11144,7 +11394,8 @@ for (const cp of crossPairs2) {
       pushRow(rows, lid, { lg: lgName, name: b.name, hit: h, b,
         live: h.live || b.live, kind: 'tt' + code + suf + 'O', back: cover.over,
         src: 'PIN Team ' + sideChar + ' Over ' + b.line, lay: b.over.lay, vol: b.over.vol,
-        xback: (b.under && b.under.back > 1.01 && b.under.back !== 0)
+        // v8.84.1: Platzhalter-Backs (100/110) sind keine Gegenquote
+        xback: (b.under && isEchteQuote(b.under.back))
           ? b.under.back : 0 });
     }
     if (cover.under > 1.01 && b.under && arbDir(cover.under, b.under.lay)) {
@@ -11152,7 +11403,7 @@ for (const cp of crossPairs2) {
       pushRow(rows, lid, { lg: lgName, name: b.name, hit: h, b,
         live: h.live || b.live, kind: 'tt' + code + suf + 'U', back: cover.under,
         src: 'PIN Team ' + sideChar + ' Under ' + b.line, lay: b.under.lay, vol: b.under.vol,
-        xback: (b.over && b.over.back > 1.01 && b.over.back !== 0)
+        xback: (b.over && isEchteQuote(b.over.back))
           ? b.over.back : 0 });
     }
     // BB-Gate: nur emittieren, wenn der Cross eine positive Marge hat.
@@ -11182,7 +11433,7 @@ for (const cp of crossPairs2) {
       pushRow(rows, lid, { lg: lgName, name: b.name, hit: h, b,
         live: h.live || b.live, kind: 'oeY', back: oe.odd,
         src: 'PIN Odd', lay: b.odd.lay, vol: b.odd.vol,
-        xback: (b.even && b.even.back > 1.01 && b.even.back !== 0)
+        xback: (b.even && isEchteQuote(b.even.back))
           ? b.even.back : 0 });
     }
     if (oe.even > 1.01 && b.even && arbDir(oe.even, b.even.lay)) {
@@ -11190,7 +11441,7 @@ for (const cp of crossPairs2) {
       pushRow(rows, lid, { lg: lgName, name: b.name, hit: h, b,
         live: h.live || b.live, kind: 'oeN', back: oe.even,
         src: 'PIN Even', lay: b.even.lay, vol: b.even.vol,
-        xback: (b.odd && b.odd.back > 1.01 && b.odd.back !== 0)
+        xback: (b.odd && isEchteQuote(b.odd.back))
           ? b.odd.back : 0 });
     }
     if (oe.odd > 1.01 && b.even && b.even.back > 1.01 && b.even.back !== 0 &&
@@ -11372,9 +11623,24 @@ for (const cp of crossPairs2) {
 
   // Pinnacle-Sport-ID -> Betfair-EventType-ID (Suche liefert Wettbewerbe ALLER
   // Sportarten; ohne Filter landen Fremd-Sport-Treffer im Ergebnis)
+  // PIN-Sport-ID -> Sportname (v8.84.5). Single Source of Truth fuer die
+  // SPORT-BENENNUNG in sportVonLiga — bewusst unabhaengig von BF_SID, weil
+  // BF_SID den Betfair-EventType liefert und fuer Sportarten ohne
+  // BF-Pendant (Padel Tennis 37, Table Tennis 32) leer bleibt. Reihenfolge
+  // der Werte = sportVonLiga-Vokabular; 6 (Boxing) -> 'MMA' und 26/27
+  // (Rugby League/Union) -> 'Rugby' wie bisher, 5 (Beach Volleyball) ->
+  // 'Volleyball' (dasselbe Label wie die Namens-Regel /volleyball/).
+  // Quelle: Live-Walk „Sportarten: … (sid N)" aus dem Discovery-Lauf.
+  const PIN_SID_SPORT = {
+    29: 'Soccer', 33: 'Tennis', 3: 'Baseball', 4: 'Basketball',
+    8: 'Cricket', 18: 'Handball', 34: 'Volleyball', 5: 'Volleyball',
+    19: 'Ice Hockey', 15: 'American Football', 39: 'Aussie Rules',
+    22: 'MMA', 6: 'MMA', 12: 'Esports', 27: 'Rugby', 26: 'Rugby',
+    10: 'Darts', 28: 'Snooker', 32: 'Table Tennis', 37: 'Padel Tennis',
+  };
   const BF_SID = { 29: 1, 33: 2, 3: 7511, 4: 7522, 8: 4, 18: 468328, 34: 998917,
     19: 7524, 15: 6423, 39: 61420, 22: 26420387, 6: 6, 12: 27454571, 27: 5, 26: 1477,
-    10: 3503, 25: 6422 };  // Darts: PIN 10 -> BF 3503 (v8.72.0); Snooker: PIN 25 -> BF 6422 (v8.75.0, probematch English Open 197802 -> COMP:11552428)
+    10: 3503, 28: 6422 };  // Darts: PIN 10 -> BF 3503 (v8.72.0); Snooker: PIN 28 -> BF 6422 (v8.84.4: korrigiert von der alten, falschen PIN-Sport-ID 25 — der Live-Walk meldet "Snooker (sid 28): English Open (pid 197802)", und /sports kennt gar kein sid 25)
   // Achtung (reale Betfair-EventType-IDs, per Recherche + Live-Suche verifiziert):
   //   8  (Cricket)        -> 4    (nicht 9/Motor Sport)
   //   3  (Baseball)       -> 7511 (COMP:11196870 MLB; nicht 4)
@@ -11384,7 +11650,9 @@ for (const cp of crossPairs2) {
   //   19 (Ice Hockey)     -> 7524, 15 (Am. Football) -> 6423
   //   39 (Aussie Rules)   -> 61420, 22 (MMA) -> 26420387, 6 (Boxing) -> 6
   //   12 (Esports)        -> 27454571 (kein Arb-Wert, aber sauber mappbar)
-  //   25 (Snooker)        -> 6422  (probematch English Open: PIN 197802 -> COMP:11552428)
+  //   28 (Snooker)        -> 6422  (probematch English Open: PIN 197802 ->
+  //                        COMP:11552428; v8.84.4: die alte Angabe 25 war
+  //                        falsch — /sports meldet Snooker als sid 28)
   // Falsche IDs liessen den Sport-Guard in scoreCands alle Kandidaten verwerfen
   // (name-Miss mit leerem Sample), der Nav-Baum zeigte auf den falschen Sport.
   const BF_SIDS = new Set(Object.values(BF_SID));
@@ -11661,7 +11929,12 @@ for (const cp of crossPairs2) {
 
   try {
     const la = JSON.parse(localStorage.getItem('vbsb_csarb_lastactive') || 'null');
-    if (Array.isArray(la) && la.length) lastActive = la;
+    if (Array.isArray(la) && la.length) {
+      lastActive = la;
+      // v8.84.4: Sport-Zuordnung des gespeicherten Walks wiederherstellen —
+      // sportVonLiga braucht sie schon vor dem ersten Discovery-Lauf.
+      walkSidsNeu();
+    }
   } catch (e) { /* ignorieren */ }
 
   let leagueMapLoaded = false;
@@ -11675,10 +11948,15 @@ for (const cp of crossPairs2) {
   // Namen und pipeDenies. Rueckgabe: Anzahl der CS+H2H-Eintraege im Payload.
   const applyLeagueMapPayload = (d) => {
     let n = 0;
+    // v8.84.3: Optionales Feld "psid" (Pinnacle-Sport-ID) je Mapping-Eintrag ->
+    // MAP_PSID. sportVonLiga nutzt es fuer Ligen, deren Name keinen
+    // Sport-Marker traegt (sonst pauschaler H2H-Fallback 'Rugby').
     if (d.mapping.cs) {
       for (const [pid, info] of Object.entries(d.mapping.cs)) {
         LEAGUES[pid] = info.comp;
         if (info.name) LIGA_NAMEN[pid] = info.name;
+        if (info.psid !== undefined && info.psid !== null && info.psid !== '')
+          MAP_PSID[pid] = Number(info.psid);
         n++;
       }
     }
@@ -11686,6 +11964,8 @@ for (const cp of crossPairs2) {
       for (const [pid, info] of Object.entries(d.mapping.h2h)) {
         H2H[pid] = info.comp;
         if (info.name) H2H_NAMEN[pid] = info.name;
+        if (info.psid !== undefined && info.psid !== null && info.psid !== '')
+          MAP_PSID[pid] = Number(info.psid);
         n++;
       }
     }
@@ -12398,9 +12678,14 @@ for (const cp of crossPairs2) {
           method: 'POST',
           url: PIPE + '/league-map',
           headers: { 'Content-Type': 'application/json' },
-          data: JSON.stringify({ merge: true, section, pid, comp: 'COMP:' + comp, name }),
+          // psid (v8.84.3): Pinnacle-Sport-ID des gewaehlten Sports mitgeben —
+          // damit kennt sportVonLiga den Sport auch bei Ligen ohne
+          // Namens-Marker (z.B. "European - Championship" = Volleyball).
+          data: JSON.stringify({ merge: true, section, pid, comp: 'COMP:' + comp, name,
+            psid: Number(sid) }),
         });
       } catch (e) { /* App nicht erreichbar */ }
+      MAP_PSID[pid] = Number(sid);
       log('Manuell gemappt: ' + name + ' (pid ' + pid + ', sid ' + sid + ') -> COMP:' + comp +
         ' (Map gesamt ' + (Object.keys(LEAGUES).length + Object.keys(H2H).length) + ').');
       manualBox.style.display = 'none';
@@ -12720,12 +13005,15 @@ for (const cp of crossPairs2) {
         H2H_NAMEN[pid] = name;
       }
       const section = sid === 29 ? 'cs' : 'h2h';
+      MAP_PSID[pid] = sid;
       try {
         GM_xmlhttpRequest({
           method: 'POST',
           url: PIPE + '/league-map',
           headers: { 'Content-Type': 'application/json' },
-          data: JSON.stringify({ merge: true, section, pid, comp: 'COMP:' + comp, name }),
+          // psid (v8.84.3): PIN-Sport-ID des Vorschlags mitgeben (SSOT-Feld).
+          data: JSON.stringify({ merge: true, section, pid, comp: 'COMP:' + comp, name,
+            psid: sid }),
         });
       } catch (e) { /* App nicht erreichbar */ }
       log('[Proposal] ' + (p.kind === 'conflict' ? 'Konflikt-Compat gutgeheissen' : 'Uebernommen') +

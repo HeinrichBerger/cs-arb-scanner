@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.84.9
+// @version      8.86.1
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -257,6 +257,7 @@
     "incheon united": "incheon utd",
     "independiente del valle": "independiente ecu",
     "independiente medellin": "ind medellin",
+    "independiente petrolero": "club independiente petrol",
     "internacional de palmira": "inter palmir",
     internazionale: "inter",
     "internazionale u23": "inter milan",
@@ -349,9 +350,11 @@
     "thanawat thirapongpaiboon": "thanawat tirapongpaiboon",
     "tochigi city": "tochigi uva fc",
     "tokyo verdy": "tokyo v",
+    "tomislav donji andrijevci": "nk tomislav",
     "top oss": "fc oss",
     "tottenham hotspur": "tottenham w",
     "tra united": "tabora united fc",
+    "trinbago knight riders": "trinbago knight rid w",
     "ulsan hd": "ulsan hyundai horang i",
     united: "utd",
     "universidad catolica del ecuador": "univ catolica ecu",
@@ -373,6 +376,7 @@
     "yeoju citizen": "yeoju fc",
     "yokohama fm": "yokohama f marinos",
     ypsonas: "digenis ypsona",
+    "yscc yokohama": "yokohama scc",
     "zhetysu taldykorgan": "fc zhetysu"
   };
   // __SYNONYMS_SIDEALIAS_END__

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.87.0
+// @version      8.88.0
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -595,6 +595,93 @@
     // ist es KEIN sauberer Kandidat — gleiche Falle wie findH n===2 -> null.
     if (hits.length !== 1) return null;
     return hits[0];
+  }
+
+  // ---------- Tolerantes Half-Matching (H2H-Pfad, v8.87.1) ----------
+  // Der H2H-Scanner (Tennis/MMA/Boxen/E-Sports) matcht toleranter als der
+  // CS-Pfad: BF-Kurznamen muessen gegen volle PIN-Namen passen koennen. Die
+  // Stufen je Halbseite: 1) volles teamMatch, 2) Token-Teilmenge (jedes
+  // BF-Halb-Token steckt im PIN-Team, z.B. "West Coast" ⊆ "West Coast
+  // Eagles"), 3) Nachname des PIN-Teams als Token der BF-Haelfte.
+  // Stufe 3 war die alleinige Luecke (User-Befund 2026-09-14, WTA Sao Paulo:
+  // BF-Doppel "Ovcharenko/Pigossi v Stoiana/Valdmannova" wurde aufs PIN-
+  // Einzel "Vendula Valdmannova v Laura Pigossi" gematcht, weil jede
+  // Doppel-Haelfte genau einen Einzel-Nachnamen enthaelt; gleiche market_id
+  // unter zwei Namen erzeugte Fake-Surebets). Dagegen:
+  //   - Namenstrenner ("/", "&", " und ") markieren Doppel-/Team-Namen von
+  //    Spielern; so eine BF-Haelfte matcht ein EINZELNES PIN-Team nie ueber
+  //     Teilmenge oder Nachname (nur noch via vollem teamMatch).
+  //   - Nachname (Stufe 3) gilt nur mit Exklusivitaet: enthaelt die BF-
+  //     Haelfte zusaetzlich einen FREMDEN Personal-Token (>= 3 Zeichen,
+  //     weder Token noch Praefix des PIN-Teams), ist es ein anderer
+  //     Spieler/Team — kein Match (blockt auch "Fnatic Rising" vs "Fnatic").
+  // Personal-Token: normierte Token >= 3 Zeichen, Erst-Token (Vorname) zaehlt
+  // nur bei der Doppel-Erkennung mit, nicht als fremd (sonst blockt der
+  // Vorname "Novak" den legitimen Teilnamen-Vergleich).
+  function personalTokens(s) {
+    const ws = norm(s).split(' ').filter(Boolean);
+    const out = [];
+    for (let i = 0; i < ws.length; i++) {
+      const w = ws[i];
+      if (w.length < 3) continue;               // Initiale/Partikel weg
+      if (i === 0 && ws.length >= 2) continue;  // Erst-Token = Vorname
+      out.push(w);
+    }
+    return out;
+  }
+  // Doppel-/Team-Name ("Ovcharenko/Pigossi", "Bryan & Bryan", zwei
+  // Personennamen) — NICHT "V. Williams" (Initiale ist < 3 Zeichen).
+  function istDoppelName(s) {
+    const t = String(s || '');
+    if (/[&/]/.test(t) || /\sund\s/i.test(t)) return true;
+    return personalTokens(t).length >= 2;
+  }
+  function halfHitTolerant(team, half) {
+    if (teamMatch(team, half)) return true;
+    if (istDoppelName(half) && !istDoppelName(team)) return false;
+    const ht = toks(half), tt = toks(team);
+    if (!ht.size || !tt.size) return false;
+    let sub = true;
+    for (const t of ht) if (!tt.has(t)) { sub = false; break; }
+    if (sub) return true;
+    const sn = norm(team).split(' ').filter(w => w && !STOPW.has(w)).pop();
+    if (!sn || !ht.has(sn)) return false;
+    // Exklusivitaet: ein fremder Personal-Token in der BF-Haelfte = anderer
+    // Spieler (Pigossi-Fall: "stoiana" neben "valdmannova") — kein Match.
+    const pinToks = personalTokens(team);
+    for (const t of norm(half).split(' ')) {
+      if (t.length < 3 || tt.has(t)) continue;
+      if (!pinToks.some(k => tokCompat(t, k))) return false;
+    }
+    return true;
+  }
+  // Event-Matching des H2H-Pfads: tolerante Haelften + Eindeutigkeit ueber
+  // ALLE PIN-Spiele der Liga (analog CS-findH). Mehrere Treffer werden nur
+  // dann verworfen, wenn sie wirklich VERSCHIEDENE Spiele sind (Team-Paar
+  // unsortiert unterschiedlich); Doppel-Listierungen desselben Spiels
+  // (Pre-Match + In-Play als eigene Event-Nodes) liefern den ersten Treffer.
+  function findH2HTolerant(pinListe, bfName) {
+    const liste = Array.isArray(pinListe) ? pinListe : [];
+    const sig = p => {
+      const t = [norm(p.teams[0]), norm(p.teams[1])].sort();
+      return t[0] + '|' + t[1];
+    };
+    const halves = String(bfName || '').split(/\s+v\s+/i).filter(Boolean);
+    const hits = [];
+    for (const p of liste) {
+      if (!p || !p.teams || !p.teams[0] || !p.teams[1]) continue;
+      if (halves.length === 2) {
+        const ok =
+          (halfHitTolerant(p.teams[0], halves[0]) && halfHitTolerant(p.teams[1], halves[1])) ||
+          (halfHitTolerant(p.teams[0], halves[1]) && halfHitTolerant(p.teams[1], halves[0]));
+        if (ok) hits.push(p);
+      } else if (teamMatch(p.teams[0], bfName) && teamMatch(p.teams[1], bfName)) {
+        hits.push(p);  // kein " v "-Eventname: ganze Zeile gegen beide Teams
+      }
+    }
+    if (!hits.length) return null;
+    const sigs = new Set(hits.map(sig));
+    return sigs.size === 1 ? hits[0] : null;
   }
 
   // ---------- BF-Marktklassifizierung ----------
@@ -6860,25 +6947,18 @@ if (!hit) continue;
       // fuehren und die Tennis-Satz-Score-Kanaele (s2/s5/sdPlus/sd5Plus) nie
       // erreichen. matched: erst exakt (teamMatch), dann Token-Subset je Halb-
       // seite, dann Nachname im Event-Halbnamen (wie der Scanner).
+      // v8.87.1 (Pigossi-Fall): evTol nutzt jetzt dieselben gepaarten
+      // Helfer wie der H2H-Scanner (halfHitTolerant + findH2HTolerant aus
+      // matching.js) — Doppel-BF-Haelften matchen kein einzelnes PIN-Team
+      // mehr per Nachname, fremde Personal-Tokens blockieren, und mehrere
+      // VERSCHIEDENE Treffer fuehren zu null statt willkuerlich erstem.
+      // Die lokalen Stufen (teamMatch/Subset/Nachname) blieben inhaltlich
+      // identisch — nur die Fallen sind weg.
+      const evTol = evName =>
+        !!findH2HTolerant([{ teams: pinTeams }], evName);
       const surnameH = t => {
         const ws = norm(t).split(' ').filter(w => w && !STOPW.has(w));
         return ws.length ? ws[ws.length - 1] : '';
-      };
-      const evTol = evName => {
-        const halves = String(evName || '').split(/\s+v\s+/i).filter(Boolean);
-        if (halves.length !== 2 || pinTeams.length < 2) return false;
-        const halfHit = (team, half) => {
-          if (teamMatch(team, half)) return true;
-          const tt = toks(team);
-          const ht = toks(half);
-          let sub = true;
-          for (const t of ht) if (!tt.has(t)) { sub = false; break; }
-          if (sub) return true;
-          const sn = surnameH(team);
-          return !!sn && ht.has(sn);
-        };
-        return (halfHit(pinTeams[0], halves[0]) && halfHit(pinTeams[1], halves[1])) ||
-               (halfHit(pinTeams[0], halves[1]) && halfHit(pinTeams[1], halves[0]));
       };
       const moH = (bfH.mo || []).filter(b => evTol(b.name));
       out.bf = { comp: String(comp), h2h: true, mo: (bfH.mo || []).length, forEvent: moH.length };
@@ -10270,6 +10350,8 @@ for (const cp of crossPairs2) {
       log('  => 0 gematcht (keine BF-Maerkte)');
       return { pin: Object.keys(pin).length, bf: 0, hit: 0 };
     }
+      // v8.87.1: surname nur noch fuer mScore (Seitenzuordnung) noetig —
+      // das findH matcht jetzt ueber halfHitTolerant/findH2HTolerant.
       const surname = t => {
         const ws = norm(t).split(' ').filter(w => w && !STOPW.has(w));
         return ws.length ? ws[ws.length - 1] : '';
@@ -10280,40 +10362,17 @@ for (const cp of crossPairs2) {
         return sn && norm(rn.nm).split(' ').includes(sn) ? 1 : 0;
       };
       const womenMark = s => /(^|\s)(w|women|womens|ladies)(\s|$)/.test(norm(s));
-      const ovl = (a, b) => {
-        const A = toks(a), B = toks(b);
-        let h = 0;
-        for (const t of A) if (B.has(t)) h++;
-        return h;
-      };
-      const halfHit = (team, half, ht) => {
-        if (!ht.size) return false;
-        if (teamMatch(team, half)) return true;
-        const tt = toks(team);
-        let sub = true;
-        for (const t of ht) if (!tt.has(t)) { sub = false; break; }
-        if (sub) return true;
-        const sn = surname(team);
-        return !!sn && ht.has(sn);
-      };
-      const findH = nb => {
-        // BF-Kurznamen ("Richmond v West Coast") gegen PIN-Namen mit
-        // Maskottchen ("Richmond Tigers v West Coast Eagles"): seitenweise
-        // vergleichen, halbe Seite muss in Team-Tokens enthalten sein.
-        const sides = norm(nb).split(' v ');
-        let best = null, bestS = -1;
-        for (const p of Object.values(pin)) {
-          const ok = sides.length === 2
-            ? (halfMatch(p, sides[0], sides[1]) || halfMatch(p, sides[1], sides[0]))
-            : (teamMatch(p.teams[0], nb) && teamMatch(p.teams[1], nb));
-          if (!ok) continue;
-          const s = ovl(p.teams[0], nb) + ovl(p.teams[1], nb);
-          if (s > bestS) { bestS = s; best = p; }
-        }
-        return best;
-      };
-      const halfMatch = (p, a, b) =>
-        halfHit(p.teams[0], a, toks(a)) && halfHit(p.teams[1], b, toks(b));
+      // v8.87.1 (Pigossi-Fall, WTA Sao Paulo): das vorherige lokale
+      // findH/halfHit matchte ueber die Nachname-Rueck-Kontainment ("pigossi"
+      // steckt im BF-Halbnamen) OHNE Exklusivitaet und OHNE Eindeutigkeits-
+      // check — das BF-Doppel "Ovcharenko/Pigossi v Stoiana/Valdmannova"
+      // landete auf dem PIN-Einzel "Valdmannova v Pigossi" (beide Spielen
+      // teilen sich beide Nachnamen) und erzeugte Fake-Surebets mit gleicher
+      // market_id unter zwei Namen. Jetzt: halfHitTolerant (Doppel-Erkennung
+      // + fremde Personal-Tokens blockieren) + findH2HTolerant (null bei
+      // mehreren VERSCHIEDENEN Treffern, analog CS-findH) aus matching.js.
+      const findH = (nb, rawName) =>
+        findH2HTolerant(Object.values(pin), rawName || nb);
       let hit = 0, skipped = 0;
       const leagueW = womenMark(H2H_NAMEN[lid] || '');
       const bbSeen = new Map();  // key -> idx in rows (BB-Dedup)

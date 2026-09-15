@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.88.2
+// @version      8.89.0
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -215,6 +215,7 @@
     "chernomorets 1919 burgas": "chernomorets bourgas",
     "chungbuk cheongju": "cheongju fc",
     "club america": "cf america",
+    "club oriental de la paz": "club oriental dlp res",
     "columbus crew ii": "columbus crew 2",
     "corvinul hunedoara": "fc hunedoara",
     "csikszereda miercurea ciuc": "csikszereda w",
@@ -279,6 +280,7 @@
     "kts k luzino": "wiked luzino",
     "kuching city": "kuching fa",
     "levadia tallinn": "fci tallinn",
+    "liverpool montevideo": "liverpool m video res",
     "lokomotiv gorna oryahovitsa": "lokomotiv go",
     "los angeles galaxy": "la galaxy",
     "louisville city": "louisville fc",
@@ -345,6 +347,7 @@
     "st patrick s athletic": "st patricks",
     "stade lavallois": "laval",
     "stockholm internazionale": "fc stockholm",
+    "sumsel united": "sumset united",
     "sutton united": "sutton utd",
     "tauro ii": "tauro fc res",
     "thanawat thirapongpaiboon": "thanawat tirapongpaiboon",

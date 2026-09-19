@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.96.0
+// @version      8.96.2
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -7402,32 +7402,216 @@ if (!hit) continue;
     // COMP (~10x schneller, Championship: 35 statt 3 bymarket-Chunks). Die
     // EVENT-Namen der COMP liefert bfLays in st.bfEventNames fuer die
     // Diagnose, falls kein Event matcht (Teamnamen-Diff).
+    // v8.96.2: PIN-straight VOR bfLays ziehen — der generische PIN-only-
+    // Durchlauf (unten) braucht ihn auch im „kein BF-Event"-Zweig.
+    const straight = await fetchStraight(h.id, log, 'why', () => {}, null)
+      .catch(() => null) || [];
     const stBf = {};
     const lays = await bfLays(comp, log, stBf, { onlyEvent: pinTeams }).catch(() => []);
-    // v8.79.13: Auch OHNE BF-Event die PIN-ML-Legs als Kanaele liefern
-    // (analog h2h-Zweig v8.79.5) — der Boost-Arb kann das Komplement trotzdem
-    // bei PIN backen (V2 = Back-Komplement @ PIN), auch wenn kein BF-Lay
-    // existiert. Der CS-Pfad hatte hier nur `return out` ohne einen einzigen
-    // Kanal — der Boost-Check meldete „kein verwandter Markt im Scan",
-    // obwohl die PIN-ML-Preise (mo3 H/D/A) vorlagen (analog zum FIBA-Fall,
-    // der im h2h-Zweig schon v8.79.5 gefixt wurde).
-    const pinOnlyMlKanaele = async () => {
-      const st = await fetchStraight(h.id, log, 'why', () => {}, null)
-        .catch(() => null) || [];
-      const mk = st.find(m => /^moneyline$/i.test(String(m.type || '')) &&
-        Number(m.period) === 0);
-      if (!mk) return 0;
-      const px = pinPrices(mk);
-      const a = toDecU(px['home']), d = toDecU(px['draw'] || px['tie']),
-        bb = toDecU(px['away']);
+
+    // ----- Generischer PIN-only-Durchlauf (v8.96.2) ----------------------
+    // Der Hauptloop weiter unten laeuft ueber die BF-Lays (`bs`) und liest die
+    // PIN-Specs INNERHALB jedes BF-Markt-Zweigs. Fuehrt Betfair einen Markt
+    // (oder eine Linie) NICHT, wurde die PIN-Seite bisher gar nicht emittiert
+    // — obwohl Pinnacle sie fuehrt (User-Befund 19.09.2026: Dortmund „Team
+    // Under 2,5" @ 1.304 lag nur bei PIN; v8.96.1 fixte das nur fuer Team-
+    // Totals). Diese Funktion schliesst die Luecke generisch: fuer jede
+    // PIN-Familie werden die von BF NICHT abgedeckten Ausgaenge als Back-Back-
+    // Kanaele gepusht (pinBack gesetzt, bfLay leer). Der Solver deckt sie ueber
+    // V2 (PIN-Back des Komplements) ab; V1 (BF-Lay) und V3 (BF-Back der
+    // Gegenseite) bleiben zwangslaeufig dunkel.
+    //   `bfUsed` = BF-Lay-Rows (leer, wenn gar kein BF-Event da ist).
+    // Ein Coverage-Set je Familie verhindert Doppelkanaele zur Hauptloop.
+    // Wichtig: immer BEIDE Seiten eines 2-Wege-/3-Wege-Markts emittieren —
+    // sonst findet `_resolve_quotes` das Komplement (komp_kinds) nicht.
+    const emitPinOnly = async (bfUsed) => {
+      try {
+      const cov = { ou: new Set(), hfou: new Set(), cs: new Set(),
+        hcs: new Set(), euh: new Set(), has: {} };
+      for (const b of (bfUsed || [])) {
+        const k = String(b.kind || '');
+        if (k === 'ou' && !b.corners) cov.ou.add(String(b.line));
+        else if (k === 'hfou') cov.hfou.add(String(b.line));
+        else if (/^hcs\d\d$/.test(k)) cov.hcs.add(k.slice(3, 4) + ',' + k.slice(4, 5));
+        else if (/^cs\d\d$/.test(k)) cov.cs.add(k.slice(2, 3) + ',' + k.slice(3, 4));
+        else if (k === 'euh') cov.euh.add(String(b.line));
+        else cov.has[k] = true;
+      }
       let n = 0;
-      if (a > 1.01) { add('mo3 H', a, null, 'PIN ML', 'BF kein Event',
-        'V2: Back-Komplement @ PIN moeglich'); n++; }
-      if (d > 1.01) { add('mo3 D', d, null, 'PIN ML', 'BF kein Event',
-        'V2: Back-Komplement @ PIN moeglich'); n++; }
-      if (bb > 1.01) { add('mo3 B', bb, null, 'PIN ML', 'BF kein Event',
-        'V2: Back-Komplement @ PIN moeglich'); n++; }
+      const po = (kind, pinBack, pinSrc) => {
+        if (!isEchteQuote(pinBack)) return;
+        add(kind, pinBack, null, pinSrc,
+          'BF-Markt fehlt (PIN-only) — V2: Back-Komplement @ PIN moeglich',
+          '', 'PIN-only ' + kind);
+        n++;
+      };
+      // 1) Tore O/U — 2-Wege je Linie (beide Seiten fuer V2).
+      for (const o of ouGoals(straight)) {
+        if (cov.ou.has(String(o.line))) continue;
+        po('ou O' + o.line, o.over, 'PIN Tore Over ' + o.line);
+        po('ou U' + o.line, o.under, 'PIN Tore Under ' + o.line);
+      }
+      // 2) HT O/U (period 1) — analog hfou-Zweig der Hauptloop.
+      for (const mkt of straight) {
+        if (!/^total/i.test(String(mkt.type || '')) || mkt.side ||
+          Number(mkt.period || 0) !== 1) continue;
+        const ps = (mkt.prices || []).filter(p => typeof p.price === 'number');
+        if (ps.length !== 2) continue;
+        const des = p => String(p.d || p.designation || '');
+        const ov = ps.find(p => /over/i.test(des(p)));
+        const un = ps.find(p => /under/i.test(des(p)));
+        const over = ov ? dec(ov.price) : dec(ps[0].price);
+        const under = un ? dec(un.price) : dec(ps[1].price);
+        let line = parseFloat(mkt.line ?? mkt.points ?? NaN);
+        if (isNaN(line)) line = parseFloat(ps[0].points ?? ps[1].points ?? NaN);
+        if (isNaN(line) || cov.hfou.has(String(line))) continue;
+        po('hfou O' + line, over, 'PIN HT Over ' + line);
+        po('hfou U' + line, under, 'PIN HT Under ' + line);
+      }
+      // 3) Match Odds FT/HT — 3-Wege (mo3 H/D/A).
+      const mlMk = straight.find(m => /^moneyline$/i.test(String(m.type || '')) &&
+        Number(m.period || 0) === 0);
+      if (mlMk && !cov.has.mo3) {
+        const px = pinPrices(mlMk);
+        po('mo3 H', toDecU(px['home']), 'PIN ML Heim');
+        po('mo3 D', toDecU(px['draw'] || px['tie']), 'PIN ML Remis');
+        po('mo3 B', toDecU(px['away']), 'PIN ML Auswaerts');
+      }
+      const mlHt = straight.find(m => /^moneyline$/i.test(String(m.type || '')) &&
+        Number(m.period) === 1);
+      if (mlHt && !cov.has.mo3h) {
+        const px = pinPrices(mlHt);
+        po('mo3h H', toDecU(px['home']), 'PIN HT-ML Heim');
+        po('mo3h D', toDecU(px['draw'] || px['tie']), 'PIN HT-ML Remis');
+        po('mo3h B', toDecU(px['away']), 'PIN HT-ML Auswaerts');
+      }
+      // 4) Double Chance — 3-Wege (dc 1X/X2/12).
+      if (!cov.has.dc) {
+        let p1x = 0, pX2 = 0, p12 = 0;
+        const dcs = h.dcs || [];
+        if (dcs.length && dcs[0].dc) {
+          p1x = dcs[0].dc['1x'] || 0; pX2 = dcs[0].dc['x2'] || 0;
+          p12 = dcs[0].dc['12'] || 0;
+        }
+        if (!(p1x || pX2 || p12)) {
+          const cm = straight.find(m =>
+            /^(double ?chance|double_chance|doublechance)$/i
+              .test(String(m.type || '')) && Number(m.period || 0) === 0);
+          if (cm) {
+            const px = pinPrices(cm);
+            p1x = dec(px['1x'] || px['home/draw'] || 0);
+            pX2 = dec(px['x2'] || px['draw/away'] || 0);
+            p12 = dec(px['12'] || px['home/away'] || 0);
+          }
+        }
+        po('dc 1X', p1x, 'PIN DC 1X');
+        po('dc X2', pX2, 'PIN DC X2');
+        po('dc 12', p12, 'PIN DC 12');
+      }
+      // 5) Draw No Bet — 2-Wege.
+      if (!cov.has.dnb) {
+        const dm = straight.find(m =>
+          /^(draw ?no ?bet|draw_no_bet|drawnobet)$/i
+            .test(String(m.type || '')) && Number(m.period || 0) === 0);
+        if (dm) {
+          const px = pinPrices(dm);
+          po('dnb H', dec(px['home'] || px['1'] || 0), 'PIN DNB Heim');
+          po('dnb A', dec(px['away'] || px['2'] || 0), 'PIN DNB Auswaerts');
+        }
+      }
+      // 6) Odd/Even (PIN-Special, Preise via Straight des Specials).
+      if (!cov.has.oe && (h.oes || []).length &&
+        typeof pinOeSpecs === 'function') {
+        const r = await pinOeSpecs(h.oes, { odd: null, even: null }, () => {})
+          .catch(() => null);
+        const cand = (r && (r.pre || r.bb)) || null;
+        if (cand) {
+          po('oe Odd', cand.odd, 'PIN Odd/Even Ungerade');
+          po('oe Even', cand.even, 'PIN Odd/Even Gerade');
+        }
+      }
+      // 7) BTTS (PIN-Special "Both Teams To Score").
+      if (!cov.has.btts && (h.yn || []).length &&
+        typeof pinBtts === 'function') {
+        const r = await pinBtts(h.yn, { name: pinTeams.join(' v '), layYes: 0,
+          layNo: 0, backYes: 0, backNo: 0 }, () => {}).catch(() => null);
+        const cand = (r && (r.pre || r.bb)) || null;
+        if (cand) {
+          po('btts Yes', cand.yes, 'PIN BTTS Ja');
+          po('btts No', cand.no, 'PIN BTTS Nein');
+        }
+      }
+      // 8) Win to Nil je Team (Yes/No).
+      for (const w of (h.w2ns || [])) {
+        const bfHat = (bfUsed || []).some(b => String(b.kind) === 'w2n' &&
+          teamMatch(b.team, w.team));
+        if (bfHat) continue;
+        const isHome = h.teams[0] && teamMatch(w.team, h.teams[0]);
+        const isAway = h.teams[1] && teamMatch(w.team, h.teams[1]);
+        if (!isHome && !isAway) continue;
+        const sfx = isHome ? 'H' : 'A';
+        po('w2n' + sfx, w.yes, 'PIN W2N ' + w.team);
+        po('w2nNo' + sfx, w.no, 'PIN W2N Nein ' + w.team);
+      }
+      // 9) Europaeisches Handicap (3-Wege).
+      for (const c of (h.euhs || [])) {
+        if (cov.euh.has(String(c.line))) continue;
+        const sideIsHome = h.teams[0] && teamMatch(c.team, h.teams[0]);
+        const sfx = sideIsHome ? 'H' : 'A';
+        const sign = c.line > 0 ? '+' : '-';
+        po('euh ' + sfx + sign, c.side,
+          'PIN 3-Way Handicap ' + c.team + ' ' + c.line);
+        po('euh D', c.draw, 'PIN 3-Way Handicap Draw');
+        po('euh ' + (sfx === 'H' ? 'A' : 'H') + (sign === '+' ? '-' : '+'),
+          c.opp, 'PIN 3-Way Handicap Gegner');
+      }
+      // 10) Correct Score FT / HT — alle Scores, die BF nicht fuehrt.
+      for (const key of Object.keys(h.csBacks || {})) {
+        if (cov.cs.has(key)) continue;
+        po('cs' + key.replace(',', ''), h.csBacks[key], 'PIN CS ' + key);
+      }
+      for (const key of Object.keys(h.htCsBacks || {})) {
+        if (cov.hcs.has(key)) continue;
+        po('hcs' + key.replace(',', ''), h.htCsBacks[key], 'PIN HT-CS ' + key);
+      }
+      // 11) Team-Totals 0,5–2,5 je Team (v8.96.1, hier generisch integriert).
+      const ttPins = [];
+      for (const m of straight) {
+        if (m.type !== 'team_total' || Number(m.period) !== 0) continue;
+        const km = /^s;\d+;tt;[\d.]+;(home|away)$/i.exec(String(m.key || ''));
+        const t = String(m.team || m.side || '').toLowerCase();
+        const side = km ? km[1].toLowerCase() :
+          ((t === 'home' || t === 'away') ? t : null);
+        if (!side) continue;
+        const tp = {};
+        for (const p of (m.prices || [])) {
+          const d = String(p.d || p.designation || '').toLowerCase();
+          if ((d === 'over' || d === 'under') && typeof p.price === 'number') tp[d] = p.price;
+          if (p.points != null && typeof p.points === 'number' && !tp.line) tp.line = p.points;
+        }
+        const over = toDecU(tp['over']), under = toDecU(tp['under']);
+        if (over > 1.01 && under > 1.01 && typeof tp.line === 'number' &&
+          tp.line >= 0.5 && tp.line <= 2.5)
+          ttPins.push({ side: side.toLowerCase(), line: tp.line, over, under });
+      }
+      for (const o of ttPins) {
+        const sc = o.side === 'home' ? 'H' : 'A';
+        const bfHat = (bfUsed || []).some(b => String(b.kind) === 'ttot' &&
+          Math.abs(Number(b.line) - o.line) < 0.01 &&
+          (teamMatch(b.team, h.teams[0]) ? 'H' :
+            (teamMatch(b.team, h.teams[1]) ? 'A' : '')) === sc);
+        if (bfHat) continue;
+        const cd = String(Math.round(o.line * 10)).padStart(2, '0');
+        po('tt' + cd + sc + 'O', o.over, 'PIN Team ' + sc + ' Over ' + o.line);
+        po('tt' + cd + sc + 'U', o.under, 'PIN Team ' + sc + ' Under ' + o.line);
+      }
+      if (n) log('  PIN-only Durchlauf: ' + n +
+        ' Kanaele (PIN-Maerkte ohne BF-Abdeckung — V2 Back-Komplement @ PIN)');
       return n;
+      } catch (e) {
+        log('  PIN-only Durchlauf FEHLER: ' + (e && e.message ? e.message : e));
+        return 0;
+      }
     };
     if (!lays.length) {
       const evNames = stBf.bfEventNames || [];
@@ -7440,20 +7624,14 @@ if (!hit) continue;
         const hint = 'BF-Events dieser COMP (erste ' + evNames.length + '): ' +
           evNames.join(' | ');
         out.reasons.push('kein BF-Event (Teamnamen-Diff) — ' + hint);
-        const pinOnlyN = await pinOnlyMlKanaele();
-        if (pinOnlyN)
-          log('  PIN-only ML-Kanaele (mo3 H/D/A): ' + pinOnlyN +
-            ' — V2 Back-Komplement @ PIN ohne BF-Event moeglich');
+        await emitPinOnly([]);
         return out;
       }
       log('=== BF-Lays leer fuer ' + comp);
       log('  Hinweis: bfLays braucht die Betfair-Seite im Browser (fetch gegen betfair.com).');
       log('  Oeffne eine Betfair-Seite (z.B. ' + comp + ') in einem Tab, damit der BF-Abruf klappt.');
       out.reasons.push('BF leer (Betfair-Seite im Browser offen? bfLays braucht betfair.com-Zugriff)');
-      const pinOnlyN = await pinOnlyMlKanaele();
-      if (pinOnlyN)
-        log('  PIN-only ML-Kanaele (mo3 H/D/A): ' + pinOnlyN +
-          ' — V2 Back-Komplement @ PIN ohne BF-Event moeglich');
+      await emitPinOnly([]);
       return out;
     }
     const bs = lays;  // bfLays hat bereits auf das Event gefiltert
@@ -7464,9 +7642,7 @@ if (!hit) continue;
     log('  BF-Kanaele: ' + [...new Set(bs.map(b => b.kind))].join(' | '));
 
     // ----- Schritt 4: je Kanal PIN-Leg vs BF-Lay + Abbruch-Grund -----
-    // Straight-Fetch fuer ML/DNB/DC/AH/TQ (h.back deckt nur den besten Wert ab)
-    const straight = await fetchStraight(h.id, log, 'why', () => {}, null).catch(() => null) || [];
-
+    // (straight wurde oben vor bfLays geladen.)
     for (const b of bs) {
       const k = b.kind || '';
       if (/^h?cs\d\d$/.test(k)) {
@@ -8161,6 +8337,14 @@ if (!hit) continue;
           'kein BF-w2n-Markt fuer ' + w.team, 'Luecke: BF fehlt');
       }
     }
+
+    // ----- Generischer PIN-only-Durchlauf (v8.96.2) ----------------------
+    // Alle PIN-Maerkte, die BF NICHT fuehrt (oder deren Linie/Score fehlt),
+    // hier als Back-Back-Kanaele nachziehen — siehe `emitPinOnly` oben an der
+    // BF-Pipeline. Der Durchlauf laeuft NACH der Hauptloop, damit das
+    // Coverage-Set die schon emittierten BF-Kanaele kennt und keine
+    // Doppelzeile entsteht.
+    await emitPinOnly(bs);
 
     if (o.download === true) {
       const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      8.94.4
+// @version      8.96.0
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -3453,11 +3453,24 @@
       sps = await pinGet('/sports').catch(() => []);
     }
     const filtered = (sps || []).filter(s =>
-      /tennis|basketball|esport|baseball|ice hockey|volleyball|handball|american football|cricket|aussie rules|australian rules|rugby|mixed martial arts|\bmma\b|boxing|darts|snooker/i
+      /tennis|basketball|esport|baseball|hockey|volleyball|handball|american football|cricket|aussie rules|australian rules|rugby|mixed martial arts|\bmma\b|boxing|darts|snooker/i
         .test(s.name || '')).map(s => ({ sid: s.id, name: s.name }));
     // Esports (sid 12) wird von /sports nicht geliefert wenn keine aktiven Ligen
     if (!filtered.some(s => s.sid === 12))
       filtered.push({ sid: 12, name: 'Esports' });
+    // v8.95.2: Ice Hockey (19) und American Football (15) fehlen in /sports,
+    // solange der Sport keine aktiven Ligen hat — im September (NHL-Vorbereitung,
+    // Saisonstart von SHL/DEL) sind BEIDE ueber Tage komplett abwesend. Live-Logs
+    // 12.-19.09.2026: die Sportarten-Zeile listet 18 Sportarten, sid 19 und sid 15
+    // kommen darin nicht vor. Folge: discovery() hat nie eine Eishockey-Liga
+    // gewalkt, league_mapping.json enthielt keinen einzigen Hockey-Eintrag und die
+    // Scanner-DB (pvb_odds.db) hatte null Ice-Hockey-Zeilen — obwohl bwin (DE)
+    // DEL/SHL anbietet (User-Befund 19.09.2026: "eigentlich sollten DEL und SHL
+    // auf beiden Seiten da sein"). Wie beim Esports-Fallback erzwingen wir beide,
+    // damit getLeaguesCached(19/15) laeuft und die Ligen als Vorschlaege erscheinen
+    // (ohne aktive Ligen meldet der Walk ehrlich "keine Ligen").
+    for (const [forcedSid, forcedName] of [[19, 'Ice Hockey'], [15, 'American Football']])
+      if (!filtered.some(s => s.sid === forcedSid)) filtered.push({ sid: forcedSid, name: forcedName });
     return filtered;
   }
 
@@ -11456,7 +11469,15 @@ for (const cp of crossPairs2) {
     const code = String(Math.round(b.line * 10)).padStart(2, '0');
     const suf = sideChar + '';
     let n = 0;
-    if (cover.over > 1.01 && b.over && arbDir(cover.over, b.over.lay)) {
+    // v8.96.0 (Boost-Quote-Carrier): Die tt-Single-Rows werden — wie die
+    // O/U-Singles (v8.62.12) — auch OHNE Arb-Richtung gespeichert. Der
+    // Boost-Checker braucht die Team-Total-Quoten für Bedingungen wie
+    // „Team 1 Over 1,5“: V1 Back-Lay (``lay``) und V2 BF-Back der Gegenseite
+    // (``xback``) stecken in dieser Zeile, V3 PIN-Back im Komplement-Kind
+    // (tt..U/tt..O). Gale bisher ``arbDir()``, hatte der DB-Schnellpfad nie
+    // Team-Total-Quoten und jeder Team-Total-Check fiel in den WHY-Pull.
+    // Die BB-Crosslegs (ttBB..) bleiben unten arb-gegatet.
+    if (cover.over > 1.01 && b.over && b.over.lay > 1.01 && b.over.lay < 1000) {
       n++;
       pushRow(rows, lid, { lg: lgName, name: b.name, hit: h, b,
         live: h.live || b.live, kind: 'tt' + code + suf + 'O', back: cover.over,
@@ -11465,7 +11486,7 @@ for (const cp of crossPairs2) {
         xback: (b.under && isEchteQuote(b.under.back))
           ? b.under.back : 0 });
     }
-    if (cover.under > 1.01 && b.under && arbDir(cover.under, b.under.lay)) {
+    if (cover.under > 1.01 && b.under && b.under.lay > 1.01 && b.under.lay < 1000) {
       n++;
       pushRow(rows, lid, { lg: lgName, name: b.name, hit: h, b,
         live: h.live || b.live, kind: 'tt' + code + suf + 'U', back: cover.under,
@@ -12858,7 +12879,7 @@ for (const cp of crossPairs2) {
       }
       const sps = await pinGet('/sports').catch(() => []);
       log('Pinnacle-Sports (H2H): ' + (sps || []).filter(s =>
-        /tennis|basketball|esport|baseball|ice hockey|volleyball|handball|american football|cricket/i
+        /tennis|basketball|esport|baseball|hockey|volleyball|handball|american football|cricket/i
           .test(s.name || '')).map(s => s.id + '=' + s.name).join(' | '));
       state.busy = false;
     };

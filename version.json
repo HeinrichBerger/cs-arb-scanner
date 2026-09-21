@@ -1,12 +1,12 @@
 {
-  "version": "9.0.1",
-  "datum": "2026-09-20",
-  "zip": "https://drive.google.com/uc?export=download&id=1QBs7gJjoq2FzEazKop27DZwH55QquXSd",
-  "zip_name": "VBSBManager-9.0.1.zip",
-  "sha256": "2ce505423b18cdb0cdfd8aac350a1ef024c8b526441ec5824bdf5235979d7f91",
-  "groesse": 3232945,
-  "userscript_version": "9.0.1",
+  "version": "9.0.3",
+  "datum": "2026-09-21",
+  "zip": "https://drive.google.com/uc?export=download&id=1ZxHVbgahqYqH9_95g6I9U-Pu5S2Gg3xS",
+  "zip_name": "VBSBManager-9.0.3.zip",
+  "sha256": "70310feb8cdd7478920f6d9666177540121ac714dd2333a3b9b1c7a5531765f9",
+  "groesse": 3310895,
+  "userscript_version": "9.0.3",
   "notizen": [
-    "v9.0.1"
+    "v9.0.3"
   ]
 }

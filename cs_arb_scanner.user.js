@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.0.4
+// @version      9.0.5
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -245,6 +245,7 @@
     "fsk mariupol": "yarud mariupol",
     "g osaka": "gamba osaka",
     "gandzasar kapan": "fc gandzasar",
+    "gimnasia la plata": "gimnasia y esgrima la p",
     "glasgow cosmics": "glasgow cosmic",
     "gloria bistrita": "cs bistrita",
     "grasshopper club zurich": "grasshoppers zurich",

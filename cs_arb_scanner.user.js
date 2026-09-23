@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.0.3
+// @version      9.0.4
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -3611,6 +3611,18 @@
     return o[t] || null;
   };
 
+  // Buchstaben-Division am Namen ("... League A", "... Liga B", "... Division
+  // C", "... Serie D", "... Group A"): Pinnacle und Betfair fuehren z.B. die
+  // UEFA Nations League als vier eigene Wettbewerbe (A-D, LIVE 23.09.2026:
+  // pin 200719/200721/200726/200727). `tierOf`/`ordNum` kennen nur Zahlen -
+  // ohne diese Erkennung fielen B/C/D auf die COMP von A (falsche Vorschlaege,
+  // danach Auto-Deny). Rueckgabe '' = keine Division genannt.
+  const divLetter = n => {
+    const m = /\b(?:league|liga|division|div|serie|group|gruppe)\s+([a-e])\b/
+      .exec(String(n || '').toLowerCase());
+    return m ? m[1] : '';
+  };
+
   // Bewertet eine beliebige Kandidaten-Liste (Suche ODER Nav-Baum) fuer die
   // Liga L und liefert den besten Match. Gemeinsamer Scoring-Pfad von
   // proposeComp (Textsuche) und dem Nav-Baum-Zweipass (Landes-COMPs).
@@ -3715,6 +3727,15 @@
       // Qualifier-Ebene (v8.20.0): Quali-Liga nur auf Quali-COMP, Haupt-Liga
       // nur auf Haupt-COMP (analog Jugend-/Altersklassen-Guard).
       if (!qualLevel([...lt].join(' '), cn)) sc -= 4;
+      // Divisions-Guard (v9.0.4): Nennen BEIDE Seiten eine Buchstaben-Division
+      // und unterscheiden sie sich, ist es ein ANDERER Wettbewerb — Kandidat
+      // verwerfen (wie der Fremdland-Guard), nicht bloss abwerten: bei
+      // "UEFA - Nations League B" gegen "uefa nations league a" bleibt sonst
+      // genug Rest-Score uebrig (uefa/nations/league), und B/C/D landen wieder
+      // auf der COMP von A. Fehlt die Division auf einer Seite (Betfair laesst
+      // sie z.B. bei "belgian first division" weg), bleibt alles wie bisher.
+      const divPin = divLetter(L.name), divCn = divLetter(cn);
+      if (divPin && divCn && divPin !== divCn) continue;
       const countryHit = !!root &&
         (rootHit(cn, root) || rootHit(cn, norm(country)) ||
         (country === 'usa' && ltSoc && (words.includes('us') || words.includes('mls'))));

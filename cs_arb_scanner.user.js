@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.0.5
+// @version      9.4.0
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -3624,6 +3624,137 @@
     return m ? m[1] : '';
   };
 
+  // ---------- Verwechslungs-Klassen (V2, v9.2.0) ----------
+  // Bis v9.0.6 lernte der Auto-Deny nur das PAAR (pid|COMP). Dieselbe
+  // Verwechslung kehrte danach mit einer anderen COMP zurueck und war wieder
+  // "neu" (Befund 23.09.2026 aus data/pvb_odds.db: 14 pids mit zwei
+  // konkurrierenden COMPs, 8 offene Konflikte fuer pids, die schon einen
+  // dauerhaften Deny tragen). Die Klasse sagt, WARUM ein Paar falsch ist,
+  // und blockt danach auch die naechste COMP derselben Art — aber nur diese:
+  // liefert die richtige COMP keine Klasse (oder eine andere), laeuft der
+  // Vorschlag unveraendert durch. Die Werte sind identisch mit DENY_KLASSEN
+  // in pvb_odds_pipe.py (die Registry validiert dagegen).
+  const KLASSEN = ['division-mismatch', 'tier-gap', 'youth-women', 'qualifier',
+    'doubles', 'foreign-country', 'state-level'];
+  // Sub-nationale Marker: der PIN-Name nennt eine State-/Regional-Ebene, der
+  // BF-Name nicht (Australia NPL/State League -> A-League, England Northern
+  // Premier League -> EPL). Bewusst konkrete Marker statt "state" allein —
+  // "United States" darf nicht als State-Liga gelten.
+  const STATE_RE = /\b(npl|state league|state division|state premier|state championship|regionalliga|regional liga|regional league|regional division|county|district|norzone|northern premier|southern premier)\b/;
+
+  // Klasse der Verwechslung fuer ein (PIN-Name, BF-Name)-Paar. '' = keine
+  // Klasse erkannt (dann lernt der Deny nur das Paar). Reihenfolge = Staerke
+  // des Belegs: benannte Division und anderes Land sind harte Ausschluesse,
+  // Stufe und State-Marker Heuristiken — dieselben Pruefungen wie die Guards
+  // in scoreCands (dort ein `continue`, hier der Lern-Grund).
+  const klasseAusNamen = (pinName, bfName) => {
+    const pl = String(pinName || '').toLowerCase();
+    const cn = String(bfName || '').toLowerCase();
+    if (!pl || !cn) return '';
+    // 1) Benannte Buchstaben-Division auf beiden Seiten und verschieden
+    //    (UEFA Nations League B != A).
+    const dP = divLetter(pinName), dC = divLetter(cn);
+    if (dP && dC && dP !== dC) return 'division-mismatch';
+    // 2) Jugend/Damen: Marker nur auf einer Seite (U19-/Frauen-Liga vs.
+    //    Senior-COMP und umgekehrt).
+    const wP = /\b(women|womens|ladies|femenina|feminina)\b/.test(pl);
+    const wC = /\b(women|womens|ladies|femenina|feminina)\b/.test(cn);
+    const yRe = /(^|\s)(u1[6-9]|u2[0-3]|youth|junior|juniors|reserves?)(\s|$)/;
+    if (wP !== wC || yRe.test(pl) !== yRe.test(cn)) return 'youth-women';
+    // 3) Einzel-COMP vs. Doppel-Liga (Tennis).
+    const doRe = /(^|\s)(doubles|doppel)(\s|$)/;
+    if (doRe.test(pl) !== doRe.test(cn)) return 'doubles';
+    // 4) Quali-Ebene (Haupt-Liga vs. Qualifikations-COMP).
+    if (!qualLevel(pinName, bfName)) return 'qualifier';
+    // 5) Ausland: der BF-Name nennt ein anderes bekanntes Land (Denmark D1 ->
+    //    Swedish D1). Nur wenn der eigene Root im BF-Namen fehlt.
+    const country = (String(pinName).split(' - ')[0] || '').toLowerCase().trim();
+    const root = countryRoot(country);
+    if (root && foreignCountryRoot(cn, root)) return 'foreign-country';
+    // 6) Stufe: beide Seiten nennen eine Ebene und sie unterscheiden sich
+    //    (2. Liga -> 3. Liga). tierOf kennt nur die festen Liganamen; die
+    //    reine Zahl vor/hinter "Liga"/"League"/"Division" deckt die
+    //    landessprachlichen Faelle ab ("Slovakia - 2. Liga" -> "slovakia 3
+    //    liga"), die tierOf nicht kennt — bewusst NUR hier (Scoring-Guard).
+    const tierZahl = n => {
+      const s = String(n || '').toLowerCase();
+      const m = /\b(\d)\s*\.?\s*(?:liga|league|division)\b/.exec(s) ||
+                /\b(?:liga|league|division)\s+(\d)\b/.exec(s);
+      return m ? m[1] : null;
+    };
+    const tP = tierOf(pinName), tC = tierOf(cn);
+    const zP = tierZahl(pinName), zC = tierZahl(cn);
+    if (tP !== null && tC !== null && tP !== tC) return 'tier-gap';
+    if (zP !== null && zC !== null && zP !== zC) return 'tier-gap';
+    // 7) State-/Regionalliga auf eine nationale Liga: der PIN-Name traegt
+    //    einen sub-nationalen Marker, der BF-Name nicht.
+    if (STATE_RE.test(pl) && !STATE_RE.test(cn)) return 'state-level';
+    return '';
+  };
+
+  // ---------- Konflikt-Beleg (V6, v9.4.0) ----------
+  // Bis v9.3.0 war ein Konflikt eine STILLE Blockade: im Log stand nur die
+  // Sammelzeile "COMP bereits woanders gemappt", in der GUI nur "Gemappt
+  // bei". Ein Pruefauftrag ist aber nur entscheidbar, wenn die Anlage des
+  // Verdachts mitgeliefert wird: WER die COMP haelt, welche Verwechslungsart
+  // vorliegt, welcher Score den Kandidaten ueberhaupt gefunden hat und ob die
+  // Liga schon einen Deny traegt. Genau das ist der Beleg (GUI-Spalte + Log +
+  // /discovery-result).
+  //
+  // Entscheiden darf das System nur, was die Namen einander WIDERLEGEN: bei
+  // den harten Klassen nennt der BF-Name selbst eine andere Division, ein
+  // anderes Land, eine andere Stufe oder die Quali-Ebene. Die einseitigen
+  // Marker (youth-women, doubles, state-level) koennen auch nur heissen, dass
+  // der BF-Name den Zusatz weglaesst — sie bleiben Beleg fuer den Menschen.
+  const HARTE_KLASSEN = new Set(['division-mismatch', 'foreign-country',
+    'tier-gap', 'qualifier']);
+  const klasseEntscheidet = klasse => HARTE_KLASSEN.has(String(klasse || ''));
+
+  // Wer haelt die COMP schon? Der Grund eines Konflikts ist kein Zustand,
+  // sondern ein PAAR: die gefundene COMP gehoert einer anderen pid im cs-
+  // oder h2h-Block. Ohne den Halter ist der Eintrag nicht pruefbar (der
+  // Vergleich laeuft ueber String, weil die Mapping-Keys Strings sind und die
+  // PIN-ids Zahlen).
+  const compHalter = (pid, comp) => {
+    const treffer = [];
+    for (const [p, c] of Object.entries(LEAGUES))
+      if (String(p) !== String(pid) && c === comp)
+        treffer.push({ sec: 'cs', pid: String(p), name: LIGA_NAMEN[p] || '' });
+    for (const [p, c] of Object.entries(H2H))
+      if (String(p) !== String(pid) && c === comp)
+        treffer.push({ sec: 'h2h', pid: String(p), name: H2H_NAMEN[p] || '' });
+    return treffer;
+  };
+  const compMappedElsewhere = (pid, comp) => compHalter(pid, comp).length > 0;
+
+  // Baut den Beleg: Felder fuer den Aufrufer (klasse/score/halter/entscheidet)
+  // und den Text fuer GUI-Spalte und Log.
+  const konfliktBeleg = (pid, comp, pinName, bfName, score) => {
+    const halter = compHalter(pid, comp);
+    const klasse = klasseAusNamen(pinName, bfName);
+    const hatScore = score !== undefined && score !== null &&
+      Number.isFinite(Number(score));
+    const teile = ['COMP gehoert ' + (halter.length
+      ? halter.map(h => h.sec + '/' + h.pid + (h.name ? ' (' + h.name + ')' : '')).join(', ')
+      : 'keiner anderen Liga')];
+    teile.push(klasse ? 'Klasse ' + klasse : 'keine Klasse erkannt');
+    if (hatScore) teile.push('Score ' + Number(score));
+    // Deny-Stand der pid: die 8 offenen Konflikte vom 23.09.2026 sassen auf
+    // Ligen, die fuer ein ANDERES COMP-Paar schon einen Deny trugen. Der
+    // Pruefer soll das sehen, ohne die Registry daneben aufzuschlagen.
+    const pidDenys = [];
+    for (const key of Object.keys(pipeDenies || {})) {
+      const e = pipeDenies[key] || {};
+      if (key.split('|')[0] !== String(pid)) continue;
+      const art = e.klasse ? 'Klasse ' + e.klasse
+        : (e.kind === 'never' ? 'never' : 'Paar');
+      if (!pidDenys.includes(art)) pidDenys.push(art);
+    }
+    if (pidDenys.length) teile.push('Liga traegt schon Deny (' + pidDenys.join(', ') + ')');
+    return { halter, klasse, score: hatScore ? Number(score) : 0,
+      entscheidet: klasseEntscheidet(klasse), text: teile.join('; ') };
+  };
+
   // Bewertet eine beliebige Kandidaten-Liste (Suche ODER Nav-Baum) fuer die
   // Liga L und liefert den besten Match. Gemeinsamer Scoring-Pfad von
   // proposeComp (Textsuche) und dem Nav-Baum-Zweipass (Landes-COMPs).
@@ -3882,14 +4013,86 @@
   };
   const promoteCount = key => promoteSet.has(key) ? 1 : 0;
   const promoteHit = key => { promoteSet.add(key); promoteSave(); };
+
+  // ---------- Deny-Meldung an die App (V1, v9.0.6) ----------
+  // Bis v9.0.5 entstand der Auto-Deny nur hier im Browser und wurde NIRGENDS
+  // festgehalten: nicht in deny_mapping.json, nicht in der Pipe-DB (Befund
+  // 23.09.2026: 107 offene Konflikte in discovery_proposals gegen 0 abgelehnte
+  // Eintraege — der einzige dauerhafte Weg, der GUI-Knopf, war nie benutzt
+  // worden). Mit dem Browserprofil starb der Lernstand; der zweite Rechner
+  // lernte dieselben Fehl-Paare jede Woche neu.
+  //
+  // Diese Meldung macht den Lernstand dauerhaft: die App schreibt ihn in
+  // deny_mapping.json, von wo er per /league-map auf jeden Rechner kommt.
+  // Ablauf dort bewusst NICHT ewig: temporaer 7 Tage, promoted 90 Tage —
+  // sonst friert ein maschinelles Fehlurteil eine Liga global ein (genau die
+  // Lehre aus dem Nations-League-Fall).
+  // Fire-and-forget: laeuft die App nicht, arbeitet der Scanner unveraendert
+  // weiter (der lokale Deny greift schon).
+  const denyReport = (eintraege, melden) => {
+    const liste = (Array.isArray(eintraege) ? eintraege : [eintraege])
+      .map(d => ({
+        pid: String(d.pid || ''), comp: String(d.comp || ''),
+        reason: String(d.reason || ''),
+        // 'auto'/leer ist ein LOKALES kind; dauerhaft ist ein Paar-Deny immer
+        // 'wrong-comp' (andere COMPs derselben Liga duerfen weiter durch).
+        // V2 (v9.2.0): traegt die Meldung eine Klasse, ist sie ein Klassen-Deny
+        // ('class') — sie blockt in der Registry auch neue Paare derselben Art.
+        kind: d.klasse ? 'class'
+          : ((d.perm || !d.kind || d.kind === 'auto') ? 'wrong-comp' : d.kind),
+        klasse: String(d.klasse || ''),
+        promoted: !!d.promoted,
+        source: d.source || 'auto',
+      }))
+      .filter(d => d.pid && d.comp);
+    if (!liste.length || typeof GM_xmlhttpRequest === 'undefined') return;
+    try {
+      GM_xmlhttpRequest({
+        method: 'POST', url: PIPE + '/deny-registry',
+        headers: { 'Content-Type': 'application/json' },
+        data: JSON.stringify({ denies: liste }),
+        onload: resp => {
+          if (!melden) return;
+          try {
+            const d = JSON.parse(resp.responseText);
+            devlog('Deny-Registry: ' + (d.angenommen || 0) + '/' + liste.length +
+              ' dauerhaft in der App hinterlegt.');
+          } catch (e) { devlog('Deny-Registry: Antwort unlesbar.'); }
+        },
+        onerror: () => {
+          if (melden) devlog('Deny-Registry: App nicht erreichbar.');
+        },
+      });
+    } catch (e) { /* GM_xmlhttpRequest nicht verfuegbar */ }
+  };
+  // __denyReport(): den GESAMMELTEN lokalen Lernstand einmal an die App
+  // melden (Nachholen fuer alles, was vor v9.0.6 nur im Browser lag).
+  unsafeWindow.__denyReport = () => {
+    if (!denyList.length) return 'Keine lokalen Denys zu melden.';
+    // Auch promotete Perm-Denys bleiben maschinell abgeleitet: sie werden
+    // als source='auto' + promoted=true gemeldet und laufen in der App nach
+    // 90 Tagen aus. Dauerhaft (ohne Ablauf) wird nur, was ein Mensch im
+    // Discovery-Tab entschieden hat — sonst friert das Gelernte eine Liga
+    // global ein (Lehre aus dem Nations-League-Fall).
+    denyReport(denyList.map(d => ({
+      pid: d.pid, comp: d.comp, reason: d.reason,
+      promoted: !!d.perm,
+      kind: d.klasse ? 'class'
+        : (d.perm ? 'wrong-comp' : (d.kind || 'wrong-comp')),
+      klasse: d.klasse || '',
+      source: 'auto',
+    })), true);
+    return denyList.length + ' lokale Denys an die App gemeldet (Log beachten).';
+  };
   // Promotions-Set per Userscript-Update zuruecksetzen? Nein — Promotion gilt
   // dauerhaft und soll Bugfixes nicht unterlaufen (nur temporaere auto-Denys
   // werden per DENY_VER_KEY zurueckgesetzt, siehe unten).
   unsafeWindow.__promotes = () => promoteSet.size ? [...promoteSet].join('\n') : 'Keine Auto-Deny-Promotions.';
-  const denyUpsert = (pid, comp, reason, perm = false, kind = perm ? 'wrong-comp' : 'auto') => {
+  const denyUpsert = (pid, comp, reason, perm = false, kind = perm ? 'wrong-comp' : 'auto', klasse = '') => {
     const key = String(pid) + '|' + comp;
     denyList = denyList.filter(d => d.key !== key);
-    denyList.push({ key, pid: String(pid), comp, reason, ts: Date.now(), perm, kind });
+    denyList.push({ key, pid: String(pid), comp, reason, ts: Date.now(), perm, kind,
+      klasse: klasse || '' });
     denySave();
   };
   // Ergebnis: 'active' (blockt), 'expired' (abgelaufen, aus Liste entfernt) oder null.
@@ -3930,9 +4133,39 @@
     if (pipeDenies[stKey]) return pipeDenies[stKey].reason || null;
     return null;
   };
+  // Klassen-Block (V2, v9.2.0): blockt nicht ein Paar, sondern eine ART fuer
+  // eine pid. Hat sich die Liga schon einmal mit einer COMP dieser Klasse
+  // verwechselt (lokal gelernt ODER aus deny_mapping.json geliefert), wird
+  // keine weitere COMP derselben Art vorgeschlagen — das faengt die zweite
+  // und dritte Verwechslung ab, die das Paar-Deny (pid|COMP) nicht kannte.
+  // Liefert die Klasse ('' = kein Treffer, Vorschlag laeuft normal durch).
+  const klasseDeny = (pid, pinName, bfName) => {
+    const klasse = klasseAusNamen(pinName, bfName);
+    if (!klasse) return '';
+    const p = String(pid);
+    for (const d of denyList) if (d.pid === p && d.klasse === klasse) return klasse;
+    for (const key of Object.keys(pipeDenies || {})) {
+      const e = pipeDenies[key];
+      if (!e || e.klasse !== klasse) continue;
+      if (key.split('|')[0] === p) return klasse;
+    }
+    return '';
+  };
   // Liefert das 'never'-kind einer Liga UNABHAENGIG vom COMP-Kandidaten:
   // true wenn Betfair fuer die Liga keinen Wettbewerb fuehrt (Pre-Skip-Kandidat).
-  const isNeverPid = pid => NEVER_PIDS.has(String(pid));
+  // Quelle 1: NEVER_PIDS im Code — Offline-Fallback, wenn die App nicht laeuft.
+  // Quelle 2: Registry-Eintraege kind='never' (deny_mapping.json, per
+  // /league-map als '<pid>|NEVER' geliefert) — seit V2 (v9.2.0) die
+  // pflegbare Fassung, die mit der ZIP auch den zweiten Rechner erreicht.
+  const isNeverPid = pid => {
+    const p = String(pid);
+    if (NEVER_PIDS.has(p)) return true;
+    for (const key of Object.keys(pipeDenies || {})) {
+      const e = pipeDenies[key];
+      if (e && e.kind === 'never' && key.split('|')[0] === p) return true;
+    }
+    return false;
+  };
   // Pids, die auf Betfair KEINEN Wettbewerb fuehren (State-/Regionalligen -
   // COMP existiert nachweislich nicht). Diese werden VOR der Suche uebersprungen
   // (kein Search-/nodeInfo-Aufwand). NEVER_RECHECK_INTERVAL erlaubt ein
@@ -3944,7 +4177,7 @@
   const neverRecheck = new Map(); // pid -> ts
   const isNeverSkip = pid => {
     const p = String(pid);
-    if (!NEVER_PIDS.has(p)) return null;
+    if (!isNeverPid(p)) return null;
     const last = neverRecheck.get(p);
     if (last && Date.now() - last < NEVER_RECHECK_MS) return 'skip';
     return 'check';  // Intervall abgelaufen -> einmalig wieder pruefen
@@ -3955,8 +4188,11 @@
   // Source of Truth in deny_mapping.json und werden live von der Odds-Pipe
   // geladen (ui.js loadLeagueMap -> pipeDenies). Bereits abgelegte perm-Eintraege
   // aelterer Builds in localStorage bleiben unveraendert aktiv. Die never-Ligen
-  // (NEVER_PIDS, ohne BF-Wettbewerb) bleiben per Pre-Skip im Code (kompakte
-  // Sammelzeile "[never] ... Ligen uebersprungen").
+  // (ohne BF-Wettbewerb) laufen per Pre-Skip (kompakte Sammelzeile
+  // "[never] ... Ligen uebersprungen"). Seit V2 (v9.2.0) kommen sie BEVORZUGT
+  // aus der Registry (deny_mapping.json, kind='never', Schluessel '<pid>|NEVER')
+  // — NEVER_PIDS im Code bleibt nur der Offline-Fallback, wenn die App nicht
+  // laeuft; die Registry-Fassung ist sichtbar und pflegbar (siehe __klassen/__denys).
 
   // Deny-Versions-Reset (analog missList): Nach einem Userscript-Update werden
   // TEMPORAERE (kind==='auto') Denys zurueckgesetzt, damit Bugfixes an genau
@@ -3982,14 +4218,30 @@
     for (const key of Object.keys(pipeDenies || {})) {
       const [pid, comp] = key.split('|');
       const d = pipeDenies[key];
-      rows.push('[static] ' + pid + ' -> ' + comp + ' [' + (d.kind || 'wrong-comp') + ', dauerhaft] ' + (d.reason || ''));
+      rows.push('[static] ' + pid + ' -> ' + comp + ' [' + (d.kind || 'wrong-comp') +
+        (d.klasse ? '/' + d.klasse : '') + ', dauerhaft] ' + (d.reason || ''));
     }
     for (const d of denyList) {
       const ttl = d.perm ? 'dauerhaft' : 'bis ' + new Date((d.ts || 0) + DENY_TTL_MS).toLocaleString('de-DE');
-      rows.push('[' + (d.kind || 'auto') + (d.perm ? ', perm' : ', auto') + '] ' + d.pid +
+      rows.push('[' + (d.kind || 'auto') + (d.klasse ? '/' + d.klasse : '') +
+        (d.perm ? ', perm' : ', auto') + '] ' + d.pid +
         ' -> ' + d.comp + ' (' + d.reason + ') ' + ttl);
     }
     return rows.length ? rows.join('\n') : 'Keine aktiven Deny-Blöcke.';
+  };
+
+  // __klassen(): die gelernten Verwechslungs-Klassen (V2, v9.2.0) — je Zeile
+  // pid -> Klasse, aus deny_mapping.json (pipeDenies) und lokal Gelerntem.
+  // Zeigt, WELCHE Art Verwechslung eine Liga gelernt hat, ohne das Paar.
+  unsafeWindow.__klassen = () => {
+    const rows = [];
+    for (const key of Object.keys(pipeDenies || {})) {
+      const d = pipeDenies[key];
+      if (d && d.klasse) rows.push('[static/' + d.klasse + '] ' + key +
+        ' (' + (d.reason || '') + ')');
+    }
+    for (const d of denyList) if (d.klasse) rows.push('[lokal/' + d.klasse + '] ' + d.key);
+    return rows.length ? rows.join('\n') : 'Keine Verwechslungs-Klassen gelernt.';
   };
 
   // ---------- Miss-Feedback-Loop (name/search-Misses) ----------
@@ -4087,12 +4339,45 @@
   // entfernt — derselbe Konflikt rauscht damit nicht mehr jede Discovery warnend
   // durch (Konzept-Lernen aus Erfahrung). TTL der Deny-Liste gilt unveraendert.
   const AUTODENY_SEEN = 3;
-  const propsUpsert = (pid, comp, cn, name, sid, kind) => {
+  // Gemeinsamer Erledigungs-Pfad eines entschiedenen Konflikts: Deny setzen,
+  // aus der Vorschlagsliste nehmen, dauerhaft an die App melden (V1) — und
+  // den Grund in den Log schreiben.
+  const autoDenyErledigen = (ex, grund, promote, klasse) => {
+    denyUpsert(ex.pid, ex.comp, grund, promote, 'auto', klasse);
+    propList = propList.filter(p => p.key !== ex.key);
+    propsSave();
+    devlog('⚠ Auto-Deny' + (promote ? ' (Promoted)' : '') + ': ' + ex.pid + ' -> ' +
+      ex.comp + ' (' + ex.name + ') ' + ex.seen + 'x als Conflict gemeldet — ' +
+      (promote ? 'dauerhaft gesetzt.' : 'in Deny-Liste uebernommen.') +
+      (klasse ? ' Klasse: ' + klasse : ''));
+    // V1 (v9.0.6): dauerhaft an die App melden, damit das Gelernte nicht
+    // im Browserprofil verdunstet und der zweite Rechner es mitbekommt.
+    denyReport({ pid: ex.pid, comp: ex.comp, reason: grund,
+      promoted: promote, klasse });
+    promoteHit(ex.key);
+  };
+  // Rueckgabe (V6): null = nichts entschieden; sonst {entschieden, klasse,
+  // promote, beleg} — ui.js sagt damit im Log, WAS das System entschieden hat.
+  const propsUpsert = (pid, comp, cn, name, sid, kind, beleg = '') => {
     const key = String(pid) + '|' + comp;
     const now = Date.now();
     const ex = propList.find(p => p.key === key);
     if (ex) {
       ex.lastSeen = now; ex.seen++;
+      if (beleg) ex.beleg = beleg;
+      const klasse = klasseAusNamen(ex.name, ex.cn);
+      // V6 (v9.4.0): "was die Klasse entscheiden kann, entscheidet das
+      // System". Ein harter Widerspruch (andere Division, anderes Land, andere
+      // Stufe, Quali-Ebene) ist KEINE offene Frage — er wird sofort gelernt
+      // statt erst nach AUTODENY_SEEN Laeufen, und der Beleg reist mit (sonst
+      // bliebe genau das die stille Blockade, die V6 aufloest).
+      if (kind === 'conflict' && klasseEntscheidet(klasse)) {
+        const promote = promoteCount(key) > 0;
+        const grund = 'Beleg entscheidet: Konflikt mit Klasse ' + klasse +
+          (ex.beleg ? ' (' + ex.beleg + ')' : '');
+        autoDenyErledigen(ex, grund, promote, klasse);
+        return { entschieden: 'klasse', klasse, promote, beleg: ex.beleg || beleg };
+      }
       if (kind === 'conflict' && ex.seen >= AUTODENY_SEEN) {
         // Auto-Deny (3x Konflikt). Promotion: Erreicht derselbe Konflikt die
         // Schwelle zum ZWEITEN Mal (nach TTL-Ablauf wieder aufgetaucht), wird er
@@ -4100,20 +4385,37 @@
         // Der Promotions-Zähler ist PERSISTENT (ueberlebt die TTL-Löschung des
         // temp-Eintrags), sonst wäre ein wiederkehrender Konflikt nicht erkennbar.
         const promote = promoteCount(key) > 0;
-        denyUpsert(ex.pid, ex.comp,
-          'Auto-Denied: Conflict ' + ex.seen + 'x in ' + AUTODENY_SEEN + ' Discovery-Laeufen' +
-          (promote ? ' (Promoted: wiederkehrend => dauerhaft)' : ''),
-          promote, 'auto');
-        propList = propList.filter(p => p.key !== key);
-        devlog('⚠ Auto-Deny' + (promote ? ' (Promoted)' : '') + ': ' + ex.pid + ' -> ' +
-          ex.comp + ' (' + ex.name + ') ' + ex.seen + 'x als Conflict gemeldet — ' +
-          (promote ? 'dauerhaft gesetzt.' : 'in Deny-Liste uebernommen.'));
-        promoteHit(key);
+        const grund = 'Auto-Denied: Conflict ' + ex.seen + 'x in ' +
+          AUTODENY_SEEN + ' Discovery-Laeufen' +
+          (promote ? ' (Promoted: wiederkehrend => dauerhaft)' : '');
+        // V2 (v9.2.0): die Klasse der Verwechslung mitlernen (z.B. 'state-level'
+        // fuer den NPL->A-League-Fall). Sie blockt danach auch neue COMP-Paare
+        // derselben Art — nicht nur dieses eine Paar.
+        autoDenyErledigen(ex, grund, promote, klasse);
+        return { entschieden: 'schwelle', klasse, promote, beleg: ex.beleg || beleg };
       }
     }
-    else { propList.push({ key, pid: String(pid), comp, cn: cn || '', name, sid, kind, firstSeen: now, lastSeen: now, seen: 1 }); }
+    else {
+      const neu = { key, pid: String(pid), comp, cn: cn || '', name, sid, kind,
+        firstSeen: now, lastSeen: now, seen: 1, beleg: beleg || '' };
+      // Auch der ERSTE Anblick eines harten Belegs wird entschieden: der
+      // Widerspruch steht in den Namen selbst, drei Laeufe Wartezeit wuerden
+      // ihn nur dreimal melden. Der Beleg geht trotzdem als Pruefauftrag an
+      // die App (ui.js schickt die Konflikte unabhaengig von propList) — nur
+      // hier im Browser entsteht kein offener Eintrag.
+      const klasse = klasseAusNamen(neu.name, neu.cn);
+      if (kind === 'conflict' && klasseEntscheidet(klasse)) {
+        const promote = promoteCount(key) > 0;
+        const grund = 'Beleg entscheidet: Konflikt mit Klasse ' + klasse +
+          (beleg ? ' (' + beleg + ')' : '');
+        autoDenyErledigen(neu, grund, promote, klasse);
+        return { entschieden: 'klasse', klasse, promote, beleg: beleg || '' };
+      }
+      propList.push(neu);
+    }
     propList = propList.slice(-200);
     propsSave();
+    return null;
   };
   unsafeWindow.__props = (kind) => {
     const rows = kind ? propList.filter(p => p.kind === kind) : propList;
@@ -4122,7 +4424,9 @@
       (p.cn ? ' [' + p.cn + ']' : '') + ' ' + p.name +
       ' | erst ' + new Date(p.firstSeen).toLocaleString('de-DE') +
       ' | letzter ' + new Date(p.lastSeen).toLocaleString('de-DE') +
-      ' | ' + p.seen + 'x').join('\n');
+      ' | ' + p.seen + 'x' +
+      // V6 (v9.4.0): der Beleg gehoert an dieselbe Stelle wie der Eintrag.
+      (p.beleg ? ' | ' + p.beleg : '')).join('\n');
   };
   // Aufraemung der Vorschlagsliste: Eintraege, deren pid inzwischen gemappt ist
   // (egal auf welche COMP), gelten als erledigt und fallen raus. Konflikte und
@@ -4395,9 +4699,55 @@ async function autoTourLid(lid, comp, log) {
     return siblings;
   }
 
+  // ---------- Lauf-Kennzahlen (V7, v9.3.0) ----------
+  // Warum: Der Befund vom 23.09.2026 (107 „offene" Konflikte, 0 Ablehnungen,
+  // seit Wochen dieselben Zeilen) war aus dem Log NICHT zu sehen — pro Lauf
+  // standen nur Einzelzeilen da, keine Bilanz. Die Kennzahlen machen den
+  // Zustand in EINER Zeile lesbar; „dauerhaft waechst, neu gemappt stagniert"
+  // ist genau die Fruehwarnung, die den Friedhof frueher gezeigt haette.
+  const LAUF_STATS_FELDER = ['aktiv', 'gemappt', 'never', 'miss', 'vorschlaege',
+    'konflikte', 'deny_dauerhaft', 'deny_klasse', 'deny_temp'];
+  const leereLaufStats = () => ({ aktiv: 0, gemappt: 0, never: 0, miss: 0,
+    vorschlaege: 0, konflikte: 0, deny_dauerhaft: 0, deny_klasse: 0,
+    deny_temp: 0 });
+  const laufStatsAdd = (a, b) => {
+    const out = leereLaufStats();
+    for (const f of LAUF_STATS_FELDER) {
+      const summe = Number((a || {})[f] || 0) + Number((b || {})[f] || 0);
+      // Nie negativ und nie NaN — die Zahl geht in Log UND DB.
+      out[f] = Number.isFinite(summe) ? Math.max(0, Math.round(summe)) : 0;
+    }
+    return out;
+  };
+  // Eine Zeile fuer Log UND App. Reihenfolge = Leserichtung: was war da, was
+  // wurde daraus, was ist gesperrt, was lernt dazu.
+  const laufStatsText = s => {
+    const d = s || {};
+    return 'Lauf: ' + (d.aktiv || 0) + ' aktiv (' + (d.gemappt || 0) +
+      ' gemappt, ' + (d.never || 0) + ' never, ' + (d.miss || 0) +
+      ' Miss) | ' + (d.vorschlaege || 0) + ' Vorschlaege, ' +
+      (d.konflikte || 0) + ' Konflikte | gesperrt: ' +
+      (d.deny_dauerhaft || 0) + ' dauerhaft + ' + (d.deny_klasse || 0) +
+      ' Klasse + ' + (d.deny_temp || 0) + ' temporaer';
+  };
+  // Fruehwarnung: es wird nur noch geblockt/gelernt, aber nichts Neues mehr
+  // gefunden. Genau der Zustand, der die 107 toten Zeilen entstehen liess.
+  const laufStatsWarnung = s => {
+    const d = s || {};
+    if ((d.vorschlaege || 0) || (d.konflikte || 0)) return '';
+    const gesperrt = (d.deny_dauerhaft || 0) + (d.deny_klasse || 0);
+    if (!gesperrt) return '';
+    return 'Hinweis: kein neuer Vorschlag, aber ' + gesperrt +
+      ' Ligen gesperrt — der Lernstand waechst, es kommt nichts Neues nach' +
+      ' (Ligen pruefen: sind die Sperren noch richtig?).';
+  };
+
   async function discovery(log, sports) {
     const now = Date.now(), soon = now + daysAhead * MS_PER_DAY;
     const props = [];
+    // Lauf-Bilanz ueber alle Sportarten (V7): wird pro Sportart gefuellt und
+    // mit den Vorschlaegen am Ende zurueckgegeben (ui.js meldet sie an die App).
+    const stats = leereLaufStats();
     // lastActive pro Lauf NEU aufbauen (kein Akkumulieren ueber Laeufe hinweg):
     // vorher wurde jede Sportart bei jedem Lauf angehaengt, wodurch die
     // Zusammenfassung ("Bereits gemappt") laengst veraltete Ligen mehrfach
@@ -4440,12 +4790,15 @@ async function autoTourLid(lid, comp, log) {
         log('  ⏭ [never] ' + neverSkipIds.size + ' Ligen ohne BF-Wettbewerb uebersprungen (' +
           neverTodo.filter(L => neverSkipIds.has(L.id)).map(L => L.name + ' (pid ' + L.id + ')').join(', ') + ')');
       }
-      let hits = 0, matches = 0;
+      let hits = 0, matches = 0, denyTemp = 0;
       const missed = [];
       // Dauerhafte/statische Denies (v8.44.3): kommen aus deny_mapping.json
       // (pipeDenies) bzw. perm-Seeds in localStorage — sie werden nicht je
       // Runde einzeln geloggt, sondern hier als Sammelzeile am Sportart-Ende.
       const aktiveDauerhaft = [];
+      // Gelernte Verwechslungs-Klassen (V2, v9.2.0): Ligen, deren Konflikt-ART
+      // schon gelernt ist, werden hier gesammelt statt gesperrt-pro-Paar.
+      const klassenAktive = [];
       // Kandidaten parallel bewerten (pool 3): Discovery lag bei 26 ungemappten
       // Soccer-Ligen ~30s wegen sequenzieller proposeComp-Calls (2-4 Searches +
       // bis 14 nodeInfo je Liga). props/hits/matches/missed werden in den
@@ -4470,6 +4823,13 @@ async function autoTourLid(lid, comp, log) {
           // nach dem Intervall wieder geprueft wird und die COMP inzwischen
           // liefert, hier als normaler Deny (dauerhaft, wrong-comp) ausgeben.
           if (neverCheckIds.has(L.id)) neverMarkChecked(L.id);
+          // V2 (v9.2.0): Klassen-Block VOR dem Paar-Block — eine schon gelernte
+          // Verwechslungsart (z.B. state-level) faengt auch ein NEUES COMP-Paar
+          // derselben Art ab. Das ist die Wurzel der 14 Doppel-Konflikte: das
+          // Paar-Deny (pid|COMP) kannte nur die erste COMP. Eine richtige COMP
+          // (ohne Klasse) laeuft unveraendert durch.
+          const kl = klasseDeny(L.id, L.name, pr.cn);
+          if (kl) { klassenAktive.push({ L, pr, kl }); return; }
           if (den === 'active') {
             const stKey = String(L.id) + '|COMP:' + pr.cid;
             const stDeny = pipeDenies[stKey];
@@ -4482,13 +4842,18 @@ async function autoTourLid(lid, comp, log) {
             // v8.44.3). Sie werden als Sammelzeile am Sportart-Ende gezaehlt.
             if (perm) { aktiveDauerhaft.push({ L, pr, reason }); return; }
             // Nur temporaere Auto-Denies einzeln melden (sind relevant/neu).
+            denyTemp++;
             log('  ⏭ [Deny' + (kind ? '/' + kind : '') + '] ' + L.name + ' (pid ' + L.id +
               ') -> COMP:' + pr.cid + ' [' + pr.cn + '] (' + reason +
               ', abgelaufen nach ' + Math.round(DENY_TTL_MS / 864e5) + ' T)');
             return;
           }
           hits++;
-          props.push({ sid: sp.sid, pid: L.id, comp: 'COMP:' + pr.cid, cn: pr.cn, name: L.name });
+          // score (V6, v9.4.0): der Textsuche-/Scoring-Wert, der den Kandidaten
+          // gefunden hat. Er ist ein Teil des Konflikt-Belegs ("Score 14") und
+          // wird sonst nirgends festgehalten.
+          props.push({ sid: sp.sid, pid: L.id, comp: 'COMP:' + pr.cid, cn: pr.cn,
+            name: L.name, score: pr.score });
           matches++;
           log('  VORSCHLAG ' + L.name + ' -> ' + 'COMP:' + pr.cid +
             (pr.cn ? ' [' + pr.cn + ']' : '') +
@@ -4509,13 +4874,34 @@ async function autoTourLid(lid, comp, log) {
         const rest = aktiveDauerhaft.length > 4 ? ' | ... +' + (aktiveDauerhaft.length - 4) + ' weitere' : '';
         log('  ⏭ [Deny dauerhaft] ' + aktiveDauerhaft.length + ' Ligen gesperrt (' + kopie + rest + ')');
       }
+      // Klassen-Sammelzeile (V2, v9.2.0): eine gelernte Verwechslungsart hat
+      // weitere COMP-Paare derselben Art gefangen — genau das, was frueher als
+      // "neuer" offener Konflikt in der Liste landete.
+      if (klassenAktive.length) {
+        const kopie = klassenAktive.slice(0, 4).map(x =>
+          x.L.name + ' -> ' + x.pr.cn + ' [' + x.kl + ']').join(' | ');
+        log('  ⏭ [Klasse] ' + klassenAktive.length +
+          ' Ligen per gelernter Verwechslungsklasse uebersprungen (' + kopie +
+          (klassenAktive.length > 4 ? ' | ... +' + (klassenAktive.length - 4) + ' weitere' : '') + ')');
+      }
       log('  ' + sp.name + ': ' + matches + ' Treffer (' + hits + '/' + todo.length +
         ' mit Suchtreffer)' + (missed.length ? ' | Misses: ' +
         missed.slice(0, 5).map(m => '"' + m.kw + '" ' + m.reason +
           (m.sample ? ' -> ' + m.sample : '')).join(', ') : ''));
+      // Lauf-Bilanz dieser Sportart (V7, v9.3.0) einrechnen.
+      Object.assign(stats, laufStatsAdd(stats, {
+        aktiv: act.length,
+        gemappt: act.length - todo.length,
+        never: neverSkipIds.size,
+        miss: missIds.size,
+        vorschlaege: matches,
+        deny_dauerhaft: aktiveDauerhaft.length,
+        deny_klasse: klassenAktive.length,
+        deny_temp: denyTemp,
+      }));
     }
     log('Discovery: ' + props.length + ' Vorschlaege');
-    return { props, lastActive };
+    return { props, lastActive, stats };
   }
   // ---------- Konsole-Helper: BF-Marktnamen auflisten (ohne vollen Scan) ----------
   // Zentrales Tool-Log: alle Dev-/Probe-Helper loggen hierueber statt je
@@ -8673,6 +9059,14 @@ if (!hit) continue;
       run: a => unsafeWindow.__pinwalk(a.sport, a.opts) },
     { id: 'misses', group: 'discovery', label: 'Discovery-Misses', desc: 'Persistierte Discovery-Misses (pid, name, reason, count, lastSeen) auflisten.',
       params: [], run: () => devlog(unsafeWindow.__misses()) },
+    // V1 (v9.0.6): Nachhol-Weg fuer den Lernstand. Alles, was vor v9.0.6 nur
+    // im localStorage dieses Browserprofils lag (Auto-Denys und promotete
+    // Perm-Denys), wird einmal an die App gemeldet und landet dauerhaft in
+    // deny_mapping.json — versioniert, im Diff sichtbar und per /league-map
+    // auf jedem Rechner aktiv. Ohne diesen Schritt bleibt der alte Bestand
+    // weiter unsichtbar und geht bei einem Profilwechsel verloren.
+    { id: 'deny-report', group: 'discovery', label: 'Deny-Stand an die App melden', desc: 'Meldet ALLE Denys dieses Browserprofils dauerhaft an die App (deny_mapping.json): temporaere mit 7-Tage-Ablauf, promotete mit 90 Tagen. Holt den Lernstand nach, der vor v9.0.6 nur im localStorage lag.',
+      params: [], run: () => devlog(unsafeWindow.__denyReport()) },
     { id: 'discovery-deny', group: 'discovery', label: 'Discovery-Deny (GUI)', desc: 'Perm-Deny aus der VBSB-GUI ("Ablehnen dauerhaft") auf die Deny-Liste anwenden.',
       params: [{ k: 'pid', label: 'PIN-Liga', v: '' }, { k: 'comp', label: 'COMP', v: 'COMP:' }, { k: 'reason', label: 'Grund', v: '' }],
       run: a => {
@@ -12271,9 +12665,15 @@ for (const cp of crossPairs2) {
     if (d.denies) {
       pipeDenies = {};
       for (const [key, info] of Object.entries(d.denies)) {
-        if (info && info.reason)
-          pipeDenies[key] = { reason: String(info.reason),
-            kind: info.kind === 'never' ? 'never' : 'wrong-comp' };
+        if (!info || !info.reason) continue;
+        // V2 (v9.2.0): auch kind 'class' und das Feld `klasse` durchreichen.
+        // Die Klasse blockt nicht nur das gelieferte Paar, sondern jedes neue
+        // COMP-Paar derselben Art (klasseAusNamen/klasseDeny in discovery.js).
+        const e = { reason: String(info.reason),
+          kind: (info.kind === 'never' || info.kind === 'class')
+            ? info.kind : 'wrong-comp' };
+        if (info.klasse) e.klasse = String(info.klasse);
+        pipeDenies[key] = e;
       }
     }
     return n;
@@ -12747,7 +13147,8 @@ for (const cp of crossPairs2) {
         ' | installiert ' + new Date(GM_info.script.updateTime).toLocaleString('de-DE') : ''));
       const sports = [{ sid: 29, name: 'Soccer' }].concat(await findSports());
       log('Sportarten: ' + sports.map(s => s.name + '(' + s.sid + ')').join(' | '));
-      const { props: results, lastActive: discActive } = await discovery(log, sports);
+      const { props: results, lastActive: discActive, stats: laufStats } =
+        await discovery(log, sports);
       // Zaehle gemappte/ungemappte Ligen aus dem vollen Satz aktiver Ligen
       let csMappedCt = 0, h2hMappedCt = 0;
       for (const sa of discActive) {
@@ -12762,15 +13163,8 @@ for (const cp of crossPairs2) {
       // meldet Konflikte in LEAGUES nie (Bug aus v7.38.7).
       // Seit 7.93 auch CROSS-BLOCK: dieselbe COMP darf nur einmal existieren,
       // egal ob cs- oder h2h-Block (sonst landen zwei Sportarten auf einer COMP).
-      const compMappedElsewhere = (pid, comp) => {
-        for (const [p, c] of Object.entries(LEAGUES)) {
-          if (p !== pid && c === comp) return true;
-        }
-        for (const [p, c] of Object.entries(H2H)) {
-          if (p !== pid && c === comp) return true;
-        }
-        return false;
-      };
+      // compMappedElsewhere/compHalter stehen in discovery.js (LEAGUES/H2H
+      // liegen dort) — der Halter wird EINMAL ermittelt, nicht zweimal.
       // Nur Bericht — kein Mapping
       const csUnmapped = results.filter(r => r.sid === 29 && !LEAGUES[r.pid] && !compMappedElsewhere(r.pid, r.comp));
       const h2hUnmapped = results.filter(r => r.sid !== 29 && !H2H[r.pid] && !compMappedElsewhere(r.pid, r.comp));
@@ -12778,8 +13172,29 @@ for (const cp of crossPairs2) {
       const h2hCompExisting = results.filter(r => r.sid !== 29 && !H2H[r.pid] && compMappedElsewhere(r.pid, r.comp));
       for (const x of csUnmapped.concat(h2hUnmapped))
         propsUpsert(x.pid, x.comp, x.cn, x.name, x.sid, 'proposal');
-      for (const x of csCompExisting.concat(h2hCompExisting))
-        propsUpsert(x.pid, x.comp, x.cn, x.name, x.sid, 'conflict');
+      // Konflikt = PRUEFAUFTRAG (V6, v9.4.0): die gefundene COMP gehoert einer
+      // ANDEREN Liga. Statt still zu blocken, wird der BELEG mitgeliefert
+      // (Halter, Klasse, Score, Deny-Stand) — und was eine harte Klasse
+      // entscheidet, entscheidet das System sofort (propsUpsert) und sagt es
+      // hier im Log. Beides ist genau der Roadmap-Satz zu V6.
+      const konflikte = csCompExisting.concat(h2hCompExisting);
+      const belegMap = new Map();
+      const systemEntschieden = [];
+      const pruefauftrag = [];
+      for (const x of konflikte) {
+        const b = konfliktBeleg(x.pid, x.comp, x.name, x.cn, x.score);
+        belegMap.set(String(x.pid) + '|' + x.comp, b);
+        const erg = propsUpsert(x.pid, x.comp, x.cn, x.name, x.sid, 'conflict', b.text);
+        if (erg && erg.entschieden === 'klasse')
+          systemEntschieden.push({ x, beleg: b, erg });
+        else
+          pruefauftrag.push(x);
+      }
+      // Lauf-Kennzahlen (V7, v9.3.0): die Konflikte kennt nur diese Stelle
+      // (sie entstehen aus dem Cross-Block-Check gegen LEAGUES/H2H), die
+      // uebrigen Zahlen liefert discovery().
+      const laufKennzahlen = laufStatsAdd(laufStats,
+        { konflikte: csCompExisting.length + h2hCompExisting.length });
       // Discovery-Nacharbeit (GUI-Tab "Discovery"): die Zusammenfassung an die
       // App schicken, damit die Vorschlaege/Konflikte dort direkt uebernommen
       // oder dauerhaft abgelehnt werden koennen (statt Log-Kopieren).
@@ -12788,18 +13203,46 @@ for (const cp of crossPairs2) {
         props: csUnmapped.concat(h2hUnmapped).map(r => ({
           sid: r.sid, pid: String(r.pid), name: r.name,
           comp: r.comp, cn: r.cn, kind: 'proposal' })),
-        conflicts: csCompExisting.concat(h2hCompExisting).map(r => ({
+        conflicts: konflikte.map(r => ({
           sid: r.sid, pid: String(r.pid), name: r.name,
-          comp: r.comp, cn: r.cn, kind: 'conflict' })),
-        counts: { csMapped: csMappedCt, h2hMapped: h2hMappedCt }
+          comp: r.comp, cn: r.cn, kind: 'conflict',
+          // V2 (v9.2.0): die Verwechslungs-Klasse mitliefern. Die App gleicht
+          // damit offene Konflikte gegen die schon gelernten Klassen der pid
+          // ab (kein zweiter Klassifizierer in Python — kein Drift).
+          klasse: (belegMap.get(String(r.pid) + '|' + r.comp) || {}).klasse || '',
+          // V6 (v9.4.0): der Beleg reist mit — die GUI zeigt damit, WARUM die
+          // COMP nicht vorgeschlagen wurde (Halter, Klasse, Score, Deny-Stand).
+          beleg: (belegMap.get(String(r.pid) + '|' + r.comp) || {}).text || '' })),
+        counts: { csMapped: csMappedCt, h2hMapped: h2hMappedCt },
+        // V7 (v9.3.0): die Bilanz des Laufs geht mit an die App (Tabelle
+        // discovery_runs). Aus dem Log war der Zustand nicht ablesbar.
+        stats: laufKennzahlen
       });
       log('---');
       log('ZUSAMMENFASSUNG:');
+      log('  ' + laufStatsText(laufKennzahlen));
+      const laufWarnung = laufStatsWarnung(laufKennzahlen);
+      if (laufWarnung) log('  ⚠ ' + laufWarnung);
       log('  Bereits gemappt: ' + csMappedCt + ' CS, ' + h2hMappedCt + ' H2H');
-      if (csCompExisting.length || h2hCompExisting.length) {
-        log('  COMP bereits woanders gemappt (' + (csCompExisting.length + h2hCompExisting.length) + '):');
-        for (const r of csCompExisting.concat(h2hCompExisting))
-          log('    ' + r.name + ' (pid ' + r.pid + ' -> ' + r.comp + ' [' + r.cn + '])');
+      // V6: das System SAGT, was es selbst entschieden hat (harte Klasse) —
+      // und der Rest steht als Pruefauftrag MIT Beleg da, nicht als stille
+      // Blockade ("COMP bereits woanders gemappt" ohne Warum half niemandem).
+      if (systemEntschieden.length) {
+        log('  ⏭ [System] ' + systemEntschieden.length +
+          ' Konflikte sofort entschieden (harte Verwechslungs-Klasse):');
+        for (const e of systemEntschieden)
+          log('    ' + e.x.name + ' (pid ' + e.x.pid + ' -> ' + e.x.comp + ' [' +
+            e.x.cn + ']): Klasse ' + e.erg.klasse +
+            (e.erg.promote ? ' (dauerhaft)' : '') + ' — ' + e.beleg.text);
+      }
+      if (pruefauftrag.length) {
+        log('  Pruefauftrag: COMP gehoert bereits einer anderen Liga (' +
+          pruefauftrag.length + '):');
+        for (const r of pruefauftrag) {
+          const b = belegMap.get(String(r.pid) + '|' + r.comp);
+          log('    ' + r.name + ' (pid ' + r.pid + ' -> ' + r.comp + ' [' + r.cn +
+            ']) — ' + (b ? b.text : ''));
+        }
       }
       log('  Fehlend (kann nachgetragen werden):');
       if (csUnmapped.length) {

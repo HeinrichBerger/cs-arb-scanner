@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.4.0
+// @version      9.7.9
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -201,17 +201,21 @@
     "atletico goianiense": "atletico go",
     "atletico mineiro": "atletico mg",
     "austria vienna": "austria wien",
+    "austria vienna ii": "austria wien a",
     "b 93": "b93 copenhagen",
     "babrungas plunge": "fk babrungas",
     "banga gargzdai": "fk banga gargzdu",
     "barcelona sc": "barcelona ecu",
     "benfica ii": "benfica b",
+    "birmingham city": "birmingham w",
+    "blackburn rovers": "blackburn u21",
     "bokelj kotor": "fk bokelj",
     "boston united": "boston utd",
+    "bw linz": "fc blau weiss linz",
     "cambuur leeuwaarden": "cambuur leeuwarden",
     "ceara sc": "ceara",
     "celta vigo ii": "celta vigo b",
-    "charlton athletic": "charlton w",
+    "charlton athletic": "charlton u21",
     "chernomorets 1919 burgas": "chernomorets bourgas",
     "chungbuk cheongju": "cheongju fc",
     "club america": "cf america",
@@ -223,7 +227,10 @@
     "dagenham and redbridge": "dag and red",
     "deportivo maipu": "cd maipu",
     "dinamo bucuresti": "dinamo bucharest",
+    "dubai city": "city fc",
+    "dubai united": "united fc",
     "dundee united": "dundee utd",
+    "dynamo kyiv": "dynamo kiev",
     egersunds: "egersund",
     "el geish": "talaea el gaish",
     "el mansoura": "el mansurah",
@@ -234,6 +241,7 @@
     "escorpiones belen": "escorpiones fc",
     "fa siauliai": "fk siauliai",
     "fc bacau": "acs bacau",
+    "fc barcelona": "barcelona w",
     "fc gangneung": "gangneung city",
     "ferrocarril midland": "fc midland",
     "fh hafnarfjordur": "hafnarfjordur w",
@@ -248,11 +256,13 @@
     "gimnasia la plata": "gimnasia y esgrima la p",
     "glasgow cosmics": "glasgow cosmic",
     "gloria bistrita": "cs bistrita",
+    "gotham fc": "nj ny gotham w",
     "grasshopper club zurich": "grasshoppers zurich",
     "guarani par": "club guarani",
     "guyana amazon warriors": "guyana amazon war w",
     "hantharwady united": "hanthawaddy united fc",
     "hearts ii": "hearts b",
+    "hegelmann ii": "hegelmann litauen b",
     "hertha bsc": "hertha berlin",
     "hilal alsahil": "al sahil",
     "huracan fc": "huracan del paso",
@@ -274,13 +284,16 @@
     "kaisar kyzylorda": "fk kaisar",
     "kansas city current": "kansas city w",
     karlsruher: "karlsruhe",
+    "kauno zalgiris ii": "fk kauno zalgiris 2",
     "khor fakkan club": "al khaleej khor fakkan",
     "kolos kovalivka": "kolos kovalyovka",
     "kolos kovalivka ii": "fc kolos kovalivka 2",
     kristianstad: "kristianstads",
     "kts k luzino": "wiked luzino",
     "kuching city": "kuching fa",
+    "leicester city": "leicester u21",
     "levadia tallinn": "fci tallinn",
+    "levadia tallinn iii": "tallinna fc levadia u19",
     "liverpool montevideo": "liverpool m video res",
     "lokomotiv gorna oryahovitsa": "lokomotiv go",
     "los angeles galaxy": "la galaxy",
@@ -307,6 +320,8 @@
     "nomme united": "nomme utd",
     "nomme united ii": "fc n mme united u21",
     "nongkseh ss cc": "nongkseh scc",
+    "north carolina courage": "north carolina w",
+    "norwich city": "norwich u21",
     "nottingham forest": "nottm forest",
     "notts county": "notts co",
     "nyva vinnytsya": "nyva vynnytsya",
@@ -318,6 +333,7 @@
     "oxford united": "oxford utd",
     paksi: "paks",
     "paris saint germain": "paris st g",
+    "parnu vaprus ii": "parnu jk vaprus u21",
     pats: "patriots",
     "plaza amador ii": "plaza amador res",
     "polonia warsaw": "polonia warszawa",
@@ -326,6 +342,7 @@
     "qadsia sc": "al qadsia",
     "racing club de montevideo": "racing club uru",
     "rapid bucuresti": "rapid bucharest",
+    "rapid vienna ii": "rapid vienna am",
     "real sociedad ii": "sociedad b",
     "rfc liege": "fc liege",
     "riga fc": "fk riga",
@@ -340,6 +357,7 @@
     "seraing utd": "seraing",
     "sfk 2000 sarajevo": "sfa 2000 sarajevo w",
     "shanghai segenda": "shanghai second",
+    "sharjah fc": "al sharjah",
     "sheffield wednesday": "sheff wed",
     "sint truidense": "sint truiden",
     "sk slovan bratislava": "slovan bratislava u19",
@@ -351,13 +369,14 @@
     "stockholm internazionale": "fc stockholm",
     "sumsel united": "sumset united",
     "sutton united": "sutton utd",
+    "swansea city": "swansea u21",
     "tauro ii": "tauro fc res",
     "thanawat thirapongpaiboon": "thanawat tirapongpaiboon",
     "tochigi city": "tochigi uva fc",
     "tokyo verdy": "tokyo v",
     "tomislav donji andrijevci": "nk tomislav",
     "top oss": "fc oss",
-    "tottenham hotspur": "tottenham w",
+    "tottenham hotspur": "tottenham u21",
     "tra united": "tabora united fc",
     "trinbago knight riders": "trinbago knight rid w",
     "ulsan hd": "ulsan hyundai horang i",
@@ -373,6 +392,7 @@
     "walter ferretti": "cd walter ferreti",
     "welwalo adigrat university": "welwalu adigrat",
     "west bromwich albion": "west brom",
+    "west ham united": "west ham u21",
     "wigan athletic": "wigan",
     "william o connor": "william oconnor",
     wolves: "wolverhampton",
@@ -3190,9 +3210,16 @@
   const SUPPRESSED_EMPTY = { 2332: 'COMP:12224917', 202026: 'COMP:12704680',
     // Pruefung 2026-08-08: Betfair fuehrt aktuell KEINE COMPs fuer diese Ligen
     // (BF-recherchiert via __bfevents/bf_snapshot --search + GUI). Sweden
-    // Damallsvenskan + Mexico Liga MX Women sind dort saisonbedingt/derzeit
-    // nicht gelistet -> keine laute Warnung, bis BF sie wieder anbietet.
-    1903: 'COMP:12742058', 201165: 'COMP:5627174' };
+    // Damallsvenskan ist dort saisonbedingt/derzeit nicht gelistet -> keine
+    // laute Warnung, bis BF sie wieder anbietet.
+    // Korrektur 2026-09-26 (Liga-MX-Femenil-Fall): "Mexico - Liga MX Women"
+    // (PIN-Liga 201165) war auf COMP:5627174 gemappt — das ist die MAENNER-
+    // Liga (PIN 2242). Der CS-Pfad matcht per Teamnamen OHNE Zeitpruefung,
+    // dadurch bekam das Frauen-Spiel "Pachuca v Santos Laguna" (26.09. 23:00Z)
+    // die BF-Maerkte des Maenner-Spiels "Santos Laguna v Pachuca" (27.09.
+    // 03:05Z): 43 Zeilen, 24 davon is_arb=1 (Schein-Surebets bis Edge 1.88).
+    // BF fuehrt Femenil separat unter COMP:11687921 -> Mapping korrigiert.
+    1903: 'COMP:12742058', 201165: 'COMP:11687921' };
 
   const H2H = {};          // Pinnacle-Liga-ID -> Betfair-COMP (2-Wege-Sportarten)
   const H2H_NAMEN = {};
@@ -3219,7 +3246,8 @@
   const GENERIC = new Set(['premier','league','liga','ligue','division','cup','super',
     'klasse','serie','championship','qualifier','national','u20','u21','u22','u23',
     'u19','u18','u17','u16','youth','junior','juniors','reserves','reserve',
-    'women','womens','w','group','groupa','groupb','a','b','1','2','3','4',
+    'women','womens','w','femenil','femenina','feminina','group','groupa','groupb',
+    'a','b','1','2','3','4',
     'primera','segunda','tercera','first','second','third','fourth',
     '1st','2nd','3rd','4th','deild','erste','divisie','nbl','europa','world']);
   // __SYNONYMS_COUNTRY_BEGIN__
@@ -3656,9 +3684,14 @@
     const dP = divLetter(pinName), dC = divLetter(cn);
     if (dP && dC && dP !== dC) return 'division-mismatch';
     // 2) Jugend/Damen: Marker nur auf einer Seite (U19-/Frauen-Liga vs.
-    //    Senior-COMP und umgekehrt).
-    const wP = /\b(women|womens|ladies|femenina|feminina)\b/.test(pl);
-    const wC = /\b(women|womens|ladies|femenina|feminina)\b/.test(cn);
+    //    Senior-COMP und umgekehrt). "femenil" ist der spanische
+    //    Liga-Marker (Betfair "Mexican Liga MX Femenil") und gehoert in
+    //    DIESE Liste — ohne ihn bekam das korrekte Paar
+    //    PIN "Mexico - Liga MX Women" <-> BF "… Femenil" faelschlich die
+    //    Klasse 'youth-women' und damit ein Deny (Liga-MX-Fall 26.09.2026).
+    const wRe = /\b(women|womens|ladies|femenil|femenina|feminina)\b/;
+    const wP = wRe.test(pl);
+    const wC = wRe.test(cn);
     const yRe = /(^|\s)(u1[6-9]|u2[0-3]|youth|junior|juniors|reserves?)(\s|$)/;
     if (wP !== wC || yRe.test(pl) !== yRe.test(cn)) return 'youth-women';
     // 3) Einzel-COMP vs. Doppel-Liga (Tennis).
@@ -3845,10 +3878,13 @@
         if (matchTok(t)) sc += acro.includes(t) ? 4 : 2;
         else if (t.length >= 4 && cn.includes(t)) sc += 1;
       }
-      if (!(lt.has('women') || lt.has('womens') || lt.has('ladies')) &&
-        /\b(women|womens|ladies)\b/.test(cn)) sc -= 4;   // Herren-Liga != Damen-Comp
-      if ((lt.has('women') || lt.has('womens') || lt.has('ladies')) &&
-        !/\b(women|womens|ladies|femenina|feminina)\b/.test(cn)) sc -= 4;   // Damen-Liga != Herren-Comp
+      // Damen-Marker vollstaendig (inkl. "femenil" = spanische Schreibweise,
+      // BF "Mexican Liga MX Femenil") — Einseitigkeit ist Verwechslung.
+      const wToken = t => /^(w|women|womens|ladies|femenil|femenina|feminina)$/.test(t);
+      const ltW = [...lt].some(wToken);
+      const cnW = /\b(women|womens|ladies|femenil|femenina|feminina)\b/.test(cn);
+      if (!ltW && cnW) sc -= 4;   // Herren-Liga != Damen-Comp
+      if (ltW && !cnW) sc -= 4;   // Damen-Liga != Herren-Comp
       // Jugend-/Altersklassen-Guard (analog Damen): U16-U23, Youth, Junior,
       // Reserve darf nicht auf eine Senior-COMP mappen und umgekehrt.
       // (Fix 7.78.4: "Poland - U19 League" -> "polish 2 liga" war vorher Proposal.)
@@ -10978,7 +11014,10 @@ for (const cp of crossPairs2) {
         const sn = surname(team);
         return sn && norm(rn.nm).split(' ').includes(sn) ? 1 : 0;
       };
-      const womenMark = s => /(^|\s)(w|women|womens|ladies)(\s|$)/.test(norm(s));
+      // "femenil/femenina/feminina" = spanische Damen-Marker (BF "… Femenil"),
+    // siehe womenMark in main.js.
+    const womenMark = s =>
+      /(^|\s)(w|women|womens|ladies|femenil|femenina|feminina)(\s|$)/.test(norm(s));
       // v8.87.1 (Pigossi-Fall, WTA Sao Paulo): das vorherige lokale
       // findH/halfHit matchte ueber die Nachname-Rueck-Kontainment ("pigossi"
       // steckt im BF-Halbnamen) OHNE Exklusivitaet und OHNE Eindeutigkeits-
@@ -11681,7 +11720,13 @@ for (const cp of crossPairs2) {
       // Die Pipe speichert beide in odds_history, damit Pruefung/Boost-Arb
       // sie per Suchleiste statt manuell bekommen (v8.38.2-Bug: Felder fehlten
       // hier, DB blieb trotz 8.38.2-Scanner leer).
-      comp: r.comp || '', mid: r.mid || ''
+      comp: r.comp || '', mid: r.mid || '',
+      // xback (v9.7.8): BF-Back des Komplement-Ausgangs (Back-Back-Cross,
+      // „Back ¬M @ Betfair") aus pushRow (v8.62.23). Genau wie comp/mid fehlte
+      // das Feld hier — die DB hatte darum IMMER xback=0 und die V3-Variante
+      // („BF-Back-Komplement") des Boost-Arb-Dialogs entstand nie (Befund
+      // Germany–Greece: hfou15U PIN-Back 1.613 vorhanden, BF-Back 1.69 fehlte).
+      xback: r.xback || 0
     }));
     // Alle Spiele des letzten Scans (auch ohne Arb/Edge): je PIN-Matchup der
     // gescannten Ligen mit comp/mid, damit die Spielsuche z.B. HSV heute
@@ -11758,7 +11803,10 @@ for (const cp of crossPairs2) {
         kind: c.kind, back: c.back, src: c.src, lay: c.lay, vol: c.vol,
         edge: c.edge, marketId: c.marketId || '', live: !!c.live,
         sport: c.sport || '', score: c.score || '',
-        startTime: c.startTime || '', comp: c.comp || '', mid: c.mid || ''
+        startTime: c.startTime || '', comp: c.comp || '', mid: c.mid || '',
+        // xback (v9.7.8): wie im vollen Snapshot mitfuehren, damit ein
+        // erneutes Senden aus der localStorage-Kopie die V3-Quelle nicht verliert.
+        xback: c.xback || 0
       })),
     };
   }
@@ -11902,7 +11950,11 @@ for (const cp of crossPairs2) {
     }
     return px;
   };
-  const womenMark = s => /(^|\s)(w|women|womens|ladies)(\s|$)/.test(norm(s));
+  // "femenil/femenina/feminina" = spanische Damen-Marker (BF fuehrt
+  // Frauenwettbewerbe als "Mexican Liga MX Femenil"); ohne sie blieb die
+  // Liga im H2H-Pfad als Herren-Liga markiert.
+  const womenMark = s =>
+    /(^|\s)(w|women|womens|ladies|femenil|femenina|feminina)(\s|$)/.test(norm(s));
   // Extrahiert O/U-Totals aus PIN-Straight (period 0, designation over/under).
   // type-Filter (nur 'total') ist PFLICHT: der straight-Pool enthaelt auch
   // team_total/spread/moneyline (period 0). Ohne Filter wuerde ouGoals

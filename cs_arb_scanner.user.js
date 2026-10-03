@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.7.9
+// @version      9.9.30
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -72,16 +72,157 @@
   // die 1.-HZ-Moneyline (gleicher Marktname „Money Line", nur period 1) als
   // Fulltime-ML ein (User-Befund 12.09.2026, Rugby Union NZ NPC „Canterbury
   // v Wellington"). Gibt es keinen period-0-Kandidaten, wird nur bei
-  // EINDEUTIGKEIT (genau ein Kandidat) weitergemacht — sonst null, damit der
-  // Aufrufer das Spiel ueberspringt statt eine falsche Periode zu hechten.
+  // EINDEUTIGKEIT (genau ein Kandidat) weitergemacht — ab v9.9.26 aber
+  // ausnahmslos null, auch bei EINEM Kandidaten mit period >= 1.
+  //
+  // v9.9.26 (User-Befund 03.10.2026, Rugby Top 14 „Bordeaux v Lyon“): dieser
+  // Rest-Fallback war dieselbe Fehlerklasse in milderer Form. Lieferte
+  // Pinnacle nur EINEN Moneyline-Kandidaten und war das die 1.-HZ-ML
+  // (period 1, Rugby-Halbzeitmaerkte tragen denselben Marktnamen), wurde sie
+  // als Ganzspiel-ML uebernommen. Weil `w[1]` (bl1hA/bl1hB) denselben Markt
+  // liest, waren blA/blB und bl1hA/bl1hB danach **bitidentisch** (live in der
+  // DB: 1.0924214417744917 / 6.72 in beiden Kanalpaaren) — die 1.-HZ-ML stand
+  // als Ganzspiel in der DB und wurde gegen den Betfair-Vollzeit-ML
+  // gehalten. Genau die Vermischung, die der User gemeldet hat. „Eindeutig“
+  // heisst nicht „Ganzspiel“: ein einzelner Kandidat mit period >= 1 ist
+  // genauso mehrdeutig wie zwei → der Aufrufer ueberspringt das Spiel.
+  // Dessen Log-Zeile nennt die gefundenen Perioden zur Diagnose.
   function waehleMatchMoneyline(kandidaten) {
     const list = Array.isArray(kandidaten) ? kandidaten : [];
     if (!list.length) return null;
-    const periode = m => (m && (m.period === undefined || m.period === null)
-      ? 0 : Number(m.period));
-    const p0 = list.find(m => periode(m) === 0);
+    const p0 = list.find(m => periodeVonMarkt(m) === 0);
     if (p0) return p0;
-    return list.length === 1 ? list[0] : null;
+    return null;
+  }
+
+  // Die EINE Perioden-Normalisierung: Pinnacle laesst `period` bei manchen
+  // Maerkten weg, das ist semantisch period 0 (Ganzspiel) — genau so wertet
+  // es `waehleMatchMoneyline` seit v9.9.26. Sie stand vorher als Inline-Pfeil
+  // in der Waehle-Funktion; die Diagnose (v9.9.28) braucht dieselbe Regel,
+  // sonst wuerde dieselbe Markt-Liste in der Logzeile anders gelesen als in
+  // der Entscheidung. `null` wird bewusst wie fehlend behandelt (nicht 0 per
+  // `Number(null)`, sondern ueber den Feld-Test) — so bleibt auch ein
+  // auf null gesetztes `period` Ganzspiel, wie es PIN meint.
+  function periodeVonMarkt(markt) {
+    if (!markt) return NaN;
+    const roh = markt.period;
+    if (roh === undefined || roh === null || roh === '') return 0;
+    return Number(roh);
+  }
+
+  // ---------- Regulaere Spielzeit (2. Markt derselben Partie, v9.9.6) ----------
+  // User-Befund 01.10.2026 (Eishockey, SHL „Frolunda HC v Brynas IF"): Beide
+  // Seiten quotieren ZWEI Siegermaerkte derselben Partie — die Moneyline
+  // (2-Wege, inkl. Verlaengerung) UND den 1X2 der regulieren Spielzeit
+  // (60 Minuten, 3-Wege). Betfair nennt letzteren „60 Minute 3 Way Match
+  // Odds" (live geprueft am EVENT:36133724, zusammen mit „Moneyline"),
+  // Pinnacle fuehrt ihn als 3-Wege-Moneyline derselben Spielzeit
+  // (designations home/draw/away) NICHT unter period 0 (das ist die
+  // Ganzspiel-ML), sondern unter einer eigenen Periode (live beobachtet:
+  // period 6; die Abschnitts-MLs liegen auf period 1-4).
+  //
+  // Beides sind VERSCHIEDENE Wetten und duerfen nie gegeneinander gepaart
+  // werden (60-Minuten-Back gegen Vollzeit-Lay = falsches Ereignis bei
+  // Verlaengerung). Deshalb liegen die beiden Erkennungen an EINER Stelle,
+  // als reine Funktionen (Node-testbar):
+  //   - istSechzigMinutenMarkt  : BF-Marktname -> eigener Kanal (rt/h60…)
+  //   - istRegulaereZeitPeriode : PIN-Periode  -> dieselbe Spielzeit
+  function istSechzigMinutenMarkt(name) {
+    return /^(60 ?minutes? ?3 ?-? ?way match odds|regular ?time ?3 ?-? ?way match odds|regular ?time match odds)$/i
+      .test(String(name || '').trim());
+  }
+  // PIN-Perioden: 0 = Ganzspiel (inkl. Verlaengerung), 1-4 = Abschnitte
+  // (Drittel/Viertel/Haelften), 8 = „To Qualify". Die 60-Minuten-ML liegt
+  // darueber (beobachtet: 6) — sie ist zusaetzlich an der Draw-Quote
+  // erkennbar (der Aufrufer prueft das, damit period 8/2-Wege nicht trifft).
+  function istRegulaereZeitPeriode(period) {
+    const p = Number(period);
+    return Number.isFinite(p) && p >= 5;
+  }
+
+  // v9.9.28:kurzes Klassen-NAMEN fuer eine PIN-Periode. Die Skip-Meldung in
+  // api_pin.js („keine period-0-Moneyline“) nannte bisher nur `periods=[1]` —
+  // daraus laesst sich nicht ablesen, WELCHE Markt-Art die Ganzspiel-ML
+  // blockiert hat (Abschnitt? 60-Minuten? To Qualify?). Genau diese Frage
+  // stellt der User bei einem Uebersprung. Die Einteilung ist die
+  // bestehende: 0 = Ganzspiel, 1-4 = Abschnitte, 8 = To Qualify, >= 5 =
+  // regulaere Spielzeit — letzteres ueber `istRegulaereZeitPeriode()`, damit
+  // die beiden Erkennungen nicht auseinanderlaufen koennen.
+  function periodeArt(period) {
+    const p = Number(period);
+    if (period === undefined || period === null || period === '')
+      return 'Ganzspiel';
+    if (!Number.isFinite(p)) return 'unbekannt';
+    if (p === 0) return 'Ganzspiel';
+    if (p === 8) return 'To Qualify';
+    if (istRegulaereZeitPeriode(p)) return '60-Minuten';
+    if (p >= 1 && p <= 4) return 'Abschnitt ' + p;
+    return 'Periode ' + p;
+  }
+  // Diagnose-Text fuer die Kandidatenliste einer blockierten period-0-ML.
+  // Reihenfolge wie in der Meldung: Anzahl, dann jeder Kandidat als
+  // `periode=Art` (Marktname nur, wenn vorhanden — PIN liefert ihn nicht
+  // immer als `marketName`).
+  function mlKandidatenText(kandidaten) {
+    const list = Array.isArray(kandidaten) ? kandidaten : [];
+    const teile = list.map(m => {
+      if (!m) return 'null=unbekannt';
+      const per = periodeVonMarkt(m);
+      const name = m.marketName || m.name || '';
+      return per + '=' + periodeArt(per) + (name ? ' (“' + name + '”)' : '');
+    });
+    return teile.join(', ');
+  }
+
+  // v9.9.27: Ist die 1.-Halbzeit-ML BITIDENTISCH mit der Ganzspiel-ML, zeigt
+  // `w[1]` nicht auf einen Abschnittsmarkt, sondern auf denselben wie
+  // `back`. Solche 1.-HZ-Zeilen werden verworfen — sonst traegt der
+  // Vollzeit-Kanal und der 1.-HZ-Kanal denselben Preis, und der Vollzeit-
+  // Kanal wird gegen den Vollzeit-Markt des Wettanbieters gehalten (live
+  // 03.10.2026, Rugby Top 14 „Bordeaux v Lyon“: 1.0924214417744917 / 6.72
+  // in blA und bl1hA). Reiner Vergleich ist richtig: beide Werte stammen
+  // dann aus demselben Markt-Objekt.
+  //
+  // Als eigene Funktion in matching.js, weil scan.js (das die Rows
+  // emittiert) nicht node-testbar ist — hier ist sie es. Reine
+  // Array-/Zahl-Eingabe, keine Seiteneffekte.
+  function periodenMix(w1, ft) {
+    if (!Array.isArray(w1) || w1.length !== 2) return false;
+    if (!Array.isArray(ft) || ft.length !== 2) return false;
+    // Nur echte Quotes vergleichen: Pinnacle liefert fuer abgeschaltete
+    // Maerkte 0.0 — 0 === 0 waere sonst ein „Mix“ und wuerde eine
+    // irrefuehrende Log-Zeile erzeugen (node-Test v9.9.27).
+    if (!isEchteQuote(w1[0]) || !isEchteQuote(w1[1])) return false;
+    if (!isEchteQuote(ft[0]) || !isEchteQuote(ft[1])) return false;
+    return w1[0] === ft[0] && w1[1] === ft[1];
+  }
+
+  // ---------- Eishockey: Tore-Handicap + Tore-Totals der 60 Minuten (v9.9.7) ----------
+  // User-Befund 02.10.2026 (Scan-Auswertung „Frolunda HC v Djurgardens IF"):
+  // Betfair fuehrt bei Eishockey VIER Markte je Partie, der Scanner griff nur
+  // ZWEI ab (Moneyline + 60-Min-1X2 aus v9.9.6). Die zwei fehlenden:
+  //   - „60 Minute Total Goals"  (Regulations-Tore, O/U ueber Linie)
+  //   - „Handicap"              (2-Wege-Puckline)
+  // Ursache war die BF-Seite, nicht die PIN-Seite: der O/U-Filter kannte nur
+  // `^total goals$` und schloss zusaetzlich alles mit „handicap" im Namen aus;
+  // classifyMarket kannte nur `^asian handicap$`. PIN liefert die Gegenstelle
+  // (spread/total, period 0) und der AH-Pfad in scan.js ist sport-neutral.
+  //
+  // Achtung Abgrenzung: `istHockeyHandicapMarkt` darf NICHT „Asian Handicap"
+  // treffen (der Soccer-AH-Pfad ist ein eigener, bereits verifizierter Kanal mit
+  // DNB-/DC-Kreuzungen) — und „Handicap" muss frei von „Half"/„Period" sein,
+  // sonst faenge es die Abschnitts-Handicaps (1st Period Handicap) mit ein.
+  function istHockeyHandicapMarkt(name) {
+    const n = String(name || '').trim();
+    return /^handicap$/i.test(n) && !/half|period/i.test(n);
+  }
+  // Tore-Totals der REGULAREN Spielzeit. `^total goals$` (Soccer, Ganzspiel)
+  // wird bewusst NICHT getroffen: sonst paarte ein 60-Minuten-Total gegen ein
+  // Soccer-Ganzspiel-Total — bei Eishockey ist das ein anderes Ereignis
+  // (Verlaengerung), genau die Verwechslung, die v9.9.6 beim 1X2 behob.
+  function istHockeyTorTotalMarkt(name) {
+    const n = String(name || '').trim();
+    return /^(60 ?minutes? ?total ?goals|regular ?time ?total ?goals)$/i.test(n);
   }
 
   // ---------- Edge-Formeln (Snapshots, in Node testbar) ----------
@@ -176,8 +317,11 @@
     "al ahli doha": "al ahli qat",
     "al ahli uae": "shabab al ahli",
     "al arabi doha": "al arabi qat",
+    "al bukiryah": "al bukayriyah",
+    "al dhaid": "al thaid",
     "al hazem": "al hazm ksa",
     "al ittihad al sakandary": "al ittihad egy",
+    "al jandal": "al jndal",
     "al khaldiya": "al khalidiyah",
     "al nasr dubai": "al nasr uae",
     "al qadisiyah": "al quadisiya ksa",
@@ -190,7 +334,9 @@
     "alianza panama": "alianza fc pan",
     amedspor: "amed sportif faaliyetler",
     "america mineiro": "america mg",
+    amsterdamsche: "afc amsterdam",
     "antigua and barbuda falcons": "antigua barbuda falcs",
+    "aps bomet": "adm police service bomet",
     "arema fc": "arema cronus",
     "arzignano valchiampo": "arzignanochiampo",
     "as marsa": "avenir s marsa",
@@ -200,21 +346,29 @@
     "atletico fc": "atletico rojiblanco",
     "atletico goianiense": "atletico go",
     "atletico mineiro": "atletico mg",
+    "atmosfera mazeikiai": "fk atmosfera",
     "austria vienna": "austria wien",
     "austria vienna ii": "austria wien a",
     "b 93": "b93 copenhagen",
     "babrungas plunge": "fk babrungas",
     "banga gargzdai": "fk banga gargzdu",
+    "banik lehota pod vtacnikom": "ofk banik lehota",
     "barcelona sc": "barcelona ecu",
+    "beijing institute of technology": "beijing tech fc",
     "benfica ii": "benfica b",
     "birmingham city": "birmingham w",
     "blackburn rovers": "blackburn u21",
+    bodrumspor: "bodrum fk",
     "bokelj kotor": "fk bokelj",
     "boston united": "boston utd",
+    "bukovyna chernivtsi": "fc bukovyna",
+    "busan transportation corporation": "busan transportation corp",
     "bw linz": "fc blau weiss linz",
     "cambuur leeuwaarden": "cambuur leeuwarden",
     "ceara sc": "ceara",
     "celta vigo ii": "celta vigo b",
+    "celtic ii": "celtic b",
+    "cha choeng sao": "chachoengsao fc",
     "charlton athletic": "charlton u21",
     "chernomorets 1919 burgas": "chernomorets bourgas",
     "chungbuk cheongju": "cheongju fc",
@@ -222,20 +376,28 @@
     "club oriental de la paz": "club oriental dlp res",
     "columbus crew ii": "columbus crew 2",
     "corvinul hunedoara": "fc hunedoara",
+    "cs sfaxien": "club sportif sfaxien",
     "csikszereda miercurea ciuc": "csikszereda w",
+    czechia: "czech republic u20",
     "d c united": "dc utd",
     "dagenham and redbridge": "dag and red",
+    "decic tuzi": "fk decic",
     "deportivo maipu": "cd maipu",
+    "deportivo toluca": "toluca w",
+    "difaa el jadida": "dhj el jadida",
     "dinamo bucuresti": "dinamo bucharest",
     "dubai city": "city fc",
     "dubai united": "united fc",
+    "dukla prague": "fk dukla praha u19",
     "dundee united": "dundee utd",
     "dynamo kyiv": "dynamo kiev",
+    easterns: "eastern storm",
     egersunds: "egersund",
     "el geish": "talaea el gaish",
     "el mansoura": "el mansurah",
     "el qanah": "olympic el qanal",
     "el sekka el hadid": "el seka elhadeed",
+    "ellas syrou": "ellas syros",
     "entebbe uppc": "entebbe fc",
     erzurumspor: "erzurum bb",
     "escorpiones belen": "escorpiones fc",
@@ -250,9 +412,11 @@
     "fortaleza ceif": "fortaleza fc",
     "fortaleza ec": "fortaleza",
     "fratria varna": "fc fratria",
+    "french guiana": "french guyana",
     "fsk mariupol": "yarud mariupol",
     "g osaka": "gamba osaka",
     "gandzasar kapan": "fc gandzasar",
+    "gargzdai sc": "gargzdai basketball",
     "gimnasia la plata": "gimnasia y esgrima la p",
     "glasgow cosmics": "glasgow cosmic",
     "gloria bistrita": "cs bistrita",
@@ -261,15 +425,19 @@
     "guarani par": "club guarani",
     "guyana amazon warriors": "guyana amazon war w",
     "hantharwady united": "hanthawaddy united fc",
+    "hapoel galil elion": "hapoel galil elyon",
+    "hapoel kfar shalem": "hapoel kfar shelem",
     "hearts ii": "hearts b",
     "hegelmann ii": "hegelmann litauen b",
     "hertha bsc": "hertha berlin",
     "hilal alsahil": "al sahil",
     "huracan fc": "huracan del paso",
+    "hv 71": "hv71",
     "incheon united": "incheon utd",
     "independiente del valle": "independiente ecu",
     "independiente medellin": "ind medellin",
     "independiente petrolero": "club independiente petrol",
+    "inegol kafkasspor": "inegol kafkas genclikspor",
     "internacional de palmira": "inter palmir",
     internazionale: "inter",
     "internazionale u23": "inter milan",
@@ -285,21 +453,25 @@
     "kansas city current": "kansas city w",
     karlsruher: "karlsruhe",
     "kauno zalgiris ii": "fk kauno zalgiris 2",
+    "kendal tornado": "tornado fc",
     "khor fakkan club": "al khaleej khor fakkan",
     "kolos kovalivka": "kolos kovalyovka",
     "kolos kovalivka ii": "fc kolos kovalivka 2",
     kristianstad: "kristianstads",
     "kts k luzino": "wiked luzino",
     "kuching city": "kuching fa",
+    "lamphun warriors": "lamphun warrior",
     "leicester city": "leicester u21",
     "levadia tallinn": "fci tallinn",
     "levadia tallinn iii": "tallinna fc levadia u19",
+    liepaja: "liepajas metalurgs",
     "liverpool montevideo": "liverpool m video res",
     "lokomotiv gorna oryahovitsa": "lokomotiv go",
     "los angeles galaxy": "la galaxy",
     "louisville city": "louisville fc",
     "ludogorets razgrad ii": "ludogorets razgrad b",
     luleaa: "ifk lulea",
+    "lyn ii": "lyn 2",
     "m'gladbach": "borussia monchengladbach",
     "maardu linnameeskond": "fc maardu",
     "machida zelvia": "fc machida",
@@ -308,6 +480,7 @@
     "man utd": "manchester united",
     "mb rouisset": "mb rouissat",
     "metalist 1925 kharkiv": "fc kharkiv",
+    "mfk ruzomberok ii": "mfk ruzomberok b",
     mgladbach: "borussia monchengladbach",
     "minnesota united": "minnesota utd",
     "mohammedan reserves": "mohammedan sc res",
@@ -317,6 +490,7 @@
     "neftchi fergona": "neftchi fargona",
     "nk celik zenika": "celik zenica",
     "nk izola": "mnk izola",
+    "nogoom fc": "nogoom el mostakbal",
     "nomme united": "nomme utd",
     "nomme united ii": "fc n mme united u21",
     "nongkseh ss cc": "nongkseh scc",
@@ -324,18 +498,22 @@
     "norwich city": "norwich u21",
     "nottingham forest": "nottm forest",
     "notts county": "notts co",
+    "nurnberg ice tigers": "nuremberg ice tigers",
     "nyva vinnytsya": "nyva vynnytsya",
     "o higgins": "ohiggins",
     "odd bk": "odds bk",
     "olimpia satu mare": "csm satu mare",
     "operario ferroviario": "operario pr",
     ostiamare: "ostia mare lido",
+    "otrant olympic": "fk otrant",
     "oxford united": "oxford utd",
     paksi: "paks",
+    "paok ii": "paok b",
     "paris saint germain": "paris st g",
     "parnu vaprus ii": "parnu jk vaprus u21",
     pats: "patriots",
     "plaza amador ii": "plaza amador res",
+    "podbeskidzie bielsko biala": "podbeskidzie b b",
     "polonia warsaw": "polonia warszawa",
     "popesti leordeni": "gloria leordeni",
     "porto ii": "porto b",
@@ -352,26 +530,41 @@
     "rz pellets wac": "wolfsberger ac",
     "sabah fk": "fc sabah",
     "saint etienne": "st etienne",
+    "saint kitts and nevis": "st kitts nevis",
+    "saint lucia": "st lucia",
+    "saint vincent and the grenadines": "st vincent grenadines",
+    "san en neo phoenix": "san en neophoenix",
     "sc poltava": "sk poltava",
     "sd atletico nacional": "atletico nacional pan",
+    "sebat genclikspor": "sebat sk",
     "seraing utd": "seraing",
+    "serc wild wings": "schwenninger wild wings",
     "sfk 2000 sarajevo": "sfa 2000 sarajevo w",
+    "shandong taishan ii": "shandong taishan b",
     "shanghai segenda": "shanghai second",
     "sharjah fc": "al sharjah",
     "sheffield wednesday": "sheff wed",
+    "shiga lake stars": "shiga lakes",
     "sint truidense": "sint truiden",
     "sk slovan bratislava": "slovan bratislava u19",
     "sonnenhof grossaspach": "sg sonnenhof",
+    "sparkasse fc bw feldkirch": "bw fledkirch",
     "sporting cp": "sporting lisbon",
     "sporting lisbon ii": "sporting lisbon b",
+    "st mirren ii": "st mirren b",
     "st patrick s athletic": "st patricks",
+    "st polten ii": "skn st polten juniors",
     "stade lavallois": "laval",
     "stockholm internazionale": "fc stockholm",
     "sumsel united": "sumset united",
+    "sutjeska niksic": "fk sutjeska",
     "sutton united": "sutton utd",
     "swansea city": "swansea u21",
+    "talleres de remedios": "talleres re",
+    "tauras taurage": "fk tauras",
     "tauro ii": "tauro fc res",
     "thanawat thirapongpaiboon": "thanawat tirapongpaiboon",
+    "tigres uanl": "tigres w",
     "tochigi city": "tochigi uva fc",
     "tokyo verdy": "tokyo v",
     "tomislav donji andrijevci": "nk tomislav",
@@ -379,24 +572,29 @@
     "tottenham hotspur": "tottenham u21",
     "tra united": "tabora united fc",
     "trinbago knight riders": "trinbago knight rid w",
+    "udi 19": "rksv udi 1919",
     "ulsan hd": "ulsan hyundai horang i",
     united: "utd",
     "universidad catolica del ecuador": "univ catolica ecu",
     "universidad de concepcion": "univ de concepcion",
     vanspor: "van buyuksehir belediyespor",
     "veertien mie": "veertien kuwana",
+    "victorian bushrangers": "victoria",
     "vilnius zalgiris": "vmfd zalgiris",
     "vilnius zalgiris ii": "mfd zalgiris vilnius res",
     vushtrria: "kosova vushtrri",
     "wallern st marienkirchen": "sv wallern",
     "walter ferretti": "cd walter ferreti",
     "welwalo adigrat university": "welwalu adigrat",
+    "wenzhou fc": "wenzhou professional",
     "west bromwich albion": "west brom",
     "west ham united": "west ham u21",
     "wigan athletic": "wigan",
     "william o connor": "william oconnor",
     wolves: "wolverhampton",
     "wsg tirol": "wsg wattens",
+    "wydad fes": "waf widad fes",
+    "wydad temara": "widad temara",
     "yantra gabrovo": "fc yantra",
     "yeoju citizen": "yeoju fc",
     "yokohama fm": "yokohama f marinos",
@@ -727,6 +925,7 @@
     if (/^either team to score/i.test(n)) tags.add('eitherTTS');
     if (/^exact total goals/i.test(n)) tags.add('exactGoals');
     if ((/^total goals$/i.test(n) && !/half|period/i.test(n)) ||
+      istHockeyTorTotalMarkt(n) ||
       (/^over\/under \d/i.test(n) && !/half|period|handicap/i.test(n))) tags.add('tot');
     // Corners O/U (Soccer): eigener Kanal, damit "Corners Over/Under 8.5" nie
     // gegen Tore-Totals paart (8.5-Kollision). Getrennt von tot!
@@ -746,6 +945,10 @@
     if (/^(half time|first half|1st half)$/i.test(n)) tags.add('mo3h');
     if (/^half time\/full time$/i.test(n)) tags.add('hf');
     if (/^asian handicap$/i.test(n)) tags.add('ah');
+    // Eishockey-Puckline (v9.9.7): BF fuehrt sie schlicht als „Handicap"
+    // (live: MARKET:1.263223119 am EVENT:36141326), NICHT als „Asian Handicap".
+    // Ohne diesen Zweig blieb der AH-Kanal bei Hockey komplett leer.
+    if (istHockeyHandicapMarkt(n)) tags.add('ah');
     // Europaeisches Handicap (3-Weg, Soccer): BF "Blackburn +1"/"Millwall +3"
     // (Team ±N, Draw, Gegner ∓N — 3 Runner inkl. Draw). Der Marktname endet
     // auf "±Ganzzahl"; 2-Wege-Spreads (Basketball/Dezimal-Linien) passen
@@ -1740,7 +1943,7 @@
     }
     const now = Date.now(), soon = now + daysAhead * MS_PER_DAY;
     const out = {};
-    let nZeit = 0, nPart = 0, nPx = 0, nFail = 0, nOdds = 0, dStraight = false;
+    let nZeit = 0, nPart = 0, nPx = 0, nFail = 0, nOdds = 0, dStraight = false, d60 = false;
     if (!(mus || []).length) {
       log('  DEBUG pinH2H[' + lid + '] RAW leer');
     } else if (!debugH2HShape) {
@@ -1921,6 +2124,7 @@
         log('  DEBUG pinH2H keine period-0-Moneyline (Kandidaten=' +
           moneylineMs.length + ', periods=' +
           JSON.stringify(moneylineMs.map(m => m.period)) +
+          ', Markt-Arten=' + mlKandidatenText(moneylineMs) +
           ') — Spiel uebersprungen: ' + ps.map(x => x.name).join(' | '));
         continue;
       }
@@ -2031,6 +2235,25 @@
       // BF-Tore-Totals (z.B. "Over/Under 8.5 Goals") matchen koennen.
       let goalsOu = ouGoals(pr);
       let cornersOu = null;
+      // Tore-Totals der REGULAREN Spielzeit (v9.9.7). Live-Beleg 02.10.2026,
+      // Hockey SHL „Frolunda HC v Djurgardens IF" (mid 1637398400):
+      //   DEBUG pinH2H totals=[{per:6,over@5,under@5},{per:6,over@4.5,under@4.5},
+      //                         {per:6,over@5.5,under@5.5},{per:1,over@1.5,under@1.5}]
+      // Die Tore-Totals der 60 Minuten liegen also auf `period 6` — wie die
+      // 3-Wege-Moneyline (ml60). `ouGoals` filtert dagegen hart auf
+      // `period === 0` (Ganzspiel), findet dort also NICHTS und die
+      // `goalsOu`-Debug-Zelle fehlt in der Ausgabe.
+      //
+      // Als EIGENER Kanal (`goalsOu60`), nicht in `goalsOu` gemischt: bei
+      // Hockey ist ein Total der 60 Minuten ein anderes Ereignis als das
+      // Ganzspiel-Total (Verlaengerung) — dieselbe Trennung, die v9.9.6 fuer
+      // den 1X2 erzwungen hat. `period 1` (1. Drittel) bleibt aussen vor.
+      let goalsOu60 = [];
+      {
+        const tot60 = (pr || []).filter(m => m && m.type === 'total' &&
+          istRegulaereZeitPeriode(m.period));
+        if (tot60.length) goalsOu60 = ouGoalsMitPeriode(tot60);
+      }
       if ((tennis || soccer) && Array.isArray(lgStraight)) {
         const tid = String(m.id);
         const totOwn = lgStraight.filter(x =>
@@ -2052,6 +2275,34 @@
         const [pa, pb] = mlPair(moneylineMs.find(m => Number(m.period) === per) || null);
         if (pa > 1.01 && pb > 1.01) w[per] = [pa, pb];
       }
+      // Regulaere Spielzeit (v9.9.6, User-Befund Eishockey „Frolunda HC v
+      // Brynas IF"): die 3-Wege-Moneyline DERSELBEN Partie — der 1X2 der 60
+      // Minuten, den Betfair als eigenen Markt fuehrt („60 Minute 3 Way
+      // Match Odds", LIVE geprueft am EVENT:36133724). Sie ist NICHT die
+      // Ganzspiel-ML: die ist period 0 und schliesst die Verlaengerung ein
+      // (waehleMatchMoneyline oben), die Abschnitts-MLs liegen auf period
+      // 1-4. Erkennungsmerkmal hier ist die Draw-Quote (nur der 3-Wege-Markt
+      // hat sie) + `istRegulaereZeitPeriode` (period >= 5, beobachtet: 6).
+      // Ohne diesen zweiten Kanal pruefte der Scanner nur die Moneyline.
+      let m60 = null;
+      const ml60 = moneylineMs.find(mkt => istRegulaereZeitPeriode(mkt.period) &&
+        (mkt.prices || []).some(p => desig(p) === 'draw' && typeof p.price === 'number'));
+      if (ml60) {
+        const p60 = {};
+        for (const p of (ml60.prices || [])) {
+          const d = desig(p);
+          if (d && typeof p.price === 'number') p60[d] = p.price;
+        }
+        const h6 = toDecU(p60['home']), d6 = toDecU(p60['draw']), a6 = toDecU(p60['away']);
+        if (h6 > 1.01 && d6 > 1.01 && a6 > 1.01) {
+          m60 = { home: h6, draw: d6, away: a6, period: Number(ml60.period) };
+          if (!d60) {
+            d60 = true;
+            log('  DEBUG pinH2H 60-Min-1X2[' + m.id + '] (period ' + ml60.period +
+              '): ' + h6.toFixed(2) + '/' + d6.toFixed(2) + '/' + a6.toFixed(2));
+          }
+        }
+      }
       // MMA/UFC: "Fight Goes To Decision" (2-Wege Yes/No) == BF "Go The Distance".
       // Der Markt ist ein PIN-Special; Preise wurden oben in fdById abgelegt.
       const fd = fdById[m.id] || null;
@@ -2069,7 +2320,7 @@
       }
       out[m.id] = { id: m.id, teams: [ps[0].name, ps[1].name], back: [a, b], back2: b2, back15: b15,
         back25: b25, back25plus: b25plus, back15neg: b15neg, w, sou, goalsOu,
-        cornersOu,
+        cornersOu, m60, goalsOu60,
         oe: oddEvenPin, fd,
         live: !!m.isLive, st: m.startTime, score: scoreOf(m) };
       nOdds++;
@@ -2080,6 +2331,10 @@
       log('  DEBUG pinH2H[' + lid + '] goalsOu: ' +
         Object.values(out).filter(p => p.goalsOu && p.goalsOu.length)
           .map(p => p.teams.join(' v ') + ' ' + p.goalsOu.map(o => o.line + '=' + o.over.toFixed(2)).join(' ')).join(' | '));
+    if (Object.values(out).some(p => p.goalsOu60 && p.goalsOu60.length))
+      log('  DEBUG pinH2H[' + lid + '] goalsOu60 (regulaere Spielzeit): ' +
+        Object.values(out).filter(p => p.goalsOu60 && p.goalsOu60.length)
+          .map(p => p.teams.join(' v ') + ' ' + p.goalsOu60.map(o => o.line + '=' + o.over.toFixed(2) + '/' + o.under.toFixed(2)).join(' ')).join(' | '));
     if (Object.values(out).some(p => p.cornersOu && p.cornersOu.length))
       log('  DEBUG pinH2H[' + lid + '] cornersOu: ' +
         Object.values(out).filter(p => p.cornersOu && p.cornersOu.length)
@@ -2764,18 +3019,33 @@
     }
     reqStats.bfCacheMiss++;
     const j = await bfLeagueMarkets(comp);
-    if (!j || !j.nodes || !j.nodes.length) { if (DBG) log('  BF-H2H ' + comp + ': leer'); return { mo: [], sb: [], sw: [], ou: [], oe: [] }; }
+    if (!j || !j.nodes || !j.nodes.length) { if (DBG) log('  BF-H2H ' + comp + ': leer'); return { mo: [], rt: [], sb: [], sw: [], ou: [], oe: [] }; }
     log('  DEBUG bfBynode ' + comp + ': ' + j.nodes.length + ' nodes, ' + (j.edges || []).length + ' edges');
     const mname = bfMktName;
     const mo = j.nodes.filter(n => n.nodeType === 'MARKET' &&
       /^(match odds|regular time match odds|head to head|moneyline|fight result)/i.test(mname(n)));
+    // Regulaere Spielzeit (v9.9.6): der 1X2 der 60 Minuten als EIGENER Markt
+    // (Eishockey: BF „60 Minute 3 Way Match Odds", LIVE geprueft am
+    // EVENT:36133724 „Frolunda HC v Brynas IF" — dort daneben „Moneyline").
+    // Er darf NICHT in die mo-Rows laufen: die Moneyline schliesst die
+    // Verlaengerung ein, der 60-Minuten-Markt nicht — ein Lay des einen
+    // gegen den Back des anderen waere das falsche Ereignis.
+    const rtM = j.nodes.filter(n => n.nodeType === 'MARKET' &&
+      istSechzigMinutenMarkt(mname(n)));
     const sbM = j.nodes.filter(n => n.nodeType === 'MARKET' &&
       /^(set betting|number of sets)$/i.test(mname(n)));
     const swM = j.nodes.filter(n => n.nodeType === 'MARKET' &&
       /^set [12] winner/i.test(mname(n)));
+    // O/U-Knoten (v9.9.7): `istHockeyTorTotalMarkt` nimmt die Eishockey-
+    // Tore-Totals der REGULAREN Spielzeit dazu („60 Minute Total Goals",
+    // live MARKET:1.263223134 am EVENT:36141326). Vorher fielen sie durch,
+    // weil der Filter nur `^total goals$` kannte UND zusaetzlich alles mit
+    // „handicap" im Namen ausschloss. Das Soccer-`^total goals$` bleibt
+    // unberuehrt: Ganzspiel ist ein anderes Ereignis als die 60 Minuten.
     const ouM = j.nodes.filter(n => n.nodeType === 'MARKET' &&
       ((/^over\/under \d/i.test(mname(n)) && !/half|period|handicap/i.test(mname(n))) ||
        (/^total goals$/i.test(mname(n)) && !/half|period/i.test(mname(n))) ||
+       istHockeyTorTotalMarkt(mname(n)) ||
        (/^total games$/i.test(mname(n)) && !/half|period/i.test(mname(n))) ||
        (/^corners over\/under \d/i.test(mname(n)) && !/half|period/i.test(mname(n)))));
     const oeM = j.nodes.filter(n => n.nodeType === 'MARKET' &&
@@ -2784,16 +3054,17 @@
     // BF-Marktname ist "Go The Distance?" (inkl. Fragezeichen).
     const gdM = j.nodes.filter(n => n.nodeType === 'MARKET' &&
       /^go(es)? (to )?(the )?distance\??$/i.test(mname(n)) && !/half|period|round/i.test(mname(n)));
-    if (!mo.length && !sbM.length && !swM.length && !ouM.length && !oeM.length && !gdM.length) {
+    if (!mo.length && !sbM.length && !swM.length && !ouM.length && !oeM.length && !gdM.length && !rtM.length) {
       const mn = [...new Set(j.nodes.filter(n => n.nodeType === 'MARKET')
         .map(m => mname(m)).filter(Boolean))].slice(0, 6);
       const allNodes = j.nodes.length;
       const mktNodes = j.nodes.filter(n => n.nodeType === 'MARKET').length;
       if (DBG) log('  BF-H2H ' + comp + ': kein Match-Odds (nodes:' + allNodes + ' mktNodes:' + mktNodes + ' Maerkte: ' + (mn.join(' | ') || 'keine') + ')');
-      return { mo: [], sb: [], sw: [], ou: [], oe: [], gd: [] };
+      return { mo: [], rt: [], sb: [], sw: [], ou: [], oe: [], gd: [] };
     }
     const evName = Object.assign(bfEventNames(j, [...mo, ...sbM, ...swM]),
-      bfEventNames(j, ouM), bfEventNames(j, oeM), bfEventNames(j, gdM));
+      bfEventNames(j, ouM), bfEventNames(j, oeM), bfEventNames(j, gdM),
+      bfEventNames(j, rtM));
     const rows = [];
     const moBms = await bfFetchChunks(bfChunkIds(mo));
     bfEachMarket(moBms, (mk, e) => {
@@ -2821,6 +3092,11 @@
           rn.runnerName || '').trim();
         return /^(the )?(draw|tie)$/i.test(nm);
       });
+      // Als „regulaere Spielzeit" benannter 3-Wege-Markt („Regular Time
+      // Match Odds"): NICHT die Vollzeit-Moneyline — er laeuft im rt-Kanal
+      // (h60-Kinds). Ohne diese Trennung wuerde der 60-Minuten-Lay gegen den
+      // Vollzeit-Back gepaart. Ein 2-Wege-Markt gleichen Namens bleibt in mo.
+      if (hadDraw && istSechzigMinutenMarkt(mname(mk))) return;
       const teams2 = run.filter(r => !/^(the )?(draw|tie)$/i.test(r.nm));
       if (teams2.length !== 2) return;
       const bfLive = !!((mk.state || {}).inplay);
@@ -2849,6 +3125,38 @@
     });
     if (Object.keys(moStart).length)
       for (const r of rows) if (r.st == null && moStart[r.name]) r.st = moStart[r.name];
+    // Regulaere Spielzeit (v9.9.6): 3-Wege-Markt mit Runner Team/Team/Draw.
+    // Strikt 3-Wege: fehlt der Draw-Runner, ist es NICHT dieser Markt (sonst
+    // wuerde ein 2-Wege-Markt als 1X2 gelesen). Die zwei Team-Runner bleiben
+    // in BF-Reihenfolge (r0/r1) — welcher Heim ist, entscheidet erst der
+    // Scan ueber die PIN-Teamnamen (Betfair listet nicht Heim zuerst, analog
+    // zu mo). Der Draw ist eindeutig (Runner „Draw"/„Tie").
+    const rtRows = [];
+    const rtBms = await bfFetchChunks(bfChunkIds(rtM));
+    bfEachMarket(rtBms, (mk, e) => {
+      if (!bfOpen(mk)) return;
+      const teams = [];
+      let draw = null;
+      (mk.runners || []).forEach(rn => {
+        const nm = ((rn.description && rn.description.runnerName) ||
+          rn.runnerName || '').trim();
+        if (!nm) return;
+        const bk = rn.exchange && rn.exchange.availableToBack && rn.exchange.availableToBack[0];
+        const ly = rn.exchange && rn.exchange.availableToLay && rn.exchange.availableToLay[0];
+        const rec = { nm, back: bk ? bk.price : 0, lay: ly ? ly.price : 0,
+          volB: bk ? bk.size : 0, volL: ly ? ly.size : 0 };
+        if (/^(the )?(draw|tie)$/i.test(nm)) draw = rec;
+        else teams.push(rec);
+      });
+      if (!draw || teams.length !== 2) return;
+      rtRows.push({ name: evName[mk.marketId] || e.eventId || String(mk.marketId),
+        r0: teams[0], r1: teams[1], draw,
+        marketId: mk.marketId, live: !!((mk.state || {}).inplay),
+        evId: e.eventId || '' });
+    });
+    if (rtRows.length)
+      if (DBG) log('  BF-H2H ' + comp + ': +' + rtRows.length +
+        ' regulaere Spielzeit (60 Min 1X2)');
     const sbRows = [];
     const sbBms = await bfFetchChunks(bfChunkIds(sbM));
     // v8.60.11-Diagnose: Set-Betting-Maerkte, die bfH2H gefunden hat, und
@@ -2972,9 +3280,26 @@
       };
       const bfSide = nm => /^under/i.test(nm) ? 'under' : (/^over/i.test(nm) ? 'over' : '');
       const rns = (mk.runners || []).map(rnNm);
+      // Eishockey-Tore-Totals (v9.9.7): BF labelt die Runner schlicht
+      // „Under"/„Over" OHNE Linie im Namen (live MARKET:1.263223134).
+      //
+      // WICHTIG (Live-Beleg 02.10.2026, __bfmkt auf 1.263223134): das
+      // `handicap`-Feld traegt hier KEINE Torelinie. Es ist eine laufende
+      // Nummer — 0.5 x Paarindex, bei 16 Paaren also 0.5/1.0/…/8.0 —
+      // waehrend PIN dieselbe Partie mit 4.5/5/5.5 quotiert. Ein frueherer
+      // Versuch, den Betrag zu nehmen (Math.abs), lieferte daher Linien
+      // 0.5-8.0 und damit voellig falsche Zeilen.
+      //
+      // Deshalb wird die Linie hier **nicht** geraten: der Marktweg
+      // uebernimmt die Zeilen unveraendert (Linie aus `handicap`, wie bei
+      // „Total Games"), und der Scan-Zweig in scan.js filtert per `is60`-Flag
+      // — nur die hockey-60-Zeilen werden verworfen, bis eine belegte
+      // Zuordnung existiert. Lieber keine Zeile als eine falsche.
+      const isHockeyTotal = istHockeyTorTotalMarkt(mktNm);
       if (mkRows <= 3) log('  DEBUG O/U mk=' + mk.marketId + ' status=' + mktStatus + ' name="' + mktNm +
         '" runners=' + rns.length + ' names=' + JSON.stringify(rns.slice(0, 6)) +
-        ' h=' + JSON.stringify((mk.runners || []).slice(0, 6).map(bfHand)));
+        ' h=' + JSON.stringify((mk.runners || []).slice(0, 6).map(bfHand)) +
+        (isHockeyTotal ? ' [HOCKEY60: handicap ist Laufnummer, nicht Linie]' : ''));
       // Total-Games-Maerkte: Die Line steckt in den Runner-Namen ("Over 21.5")
       // ODER -- wenn der Runner-Name keine Ziffer traegt (Live-Scan: nur "Under"/
       // "Over") -- im Handicap-Feld; pro Linie ein O/U-Paar bauen (~110 Runner).
@@ -3005,7 +3330,7 @@
           const bfLive = !!((mk.state || {}).inplay);
           ouRows.push({ name: evName[mk.marketId] || e.eventId || String(mk.marketId),
             line: g.line, over: g.over, under: g.under, marketId: mk.marketId, live: bfLive,
-            corners: isCorners });
+            corners: isCorners, h60: isHockeyTotal });
         }
         if (mkRows <= 3) log('  DEBUG O/U namedPairs=' + keys.length + ' ok=' + ouRows.length);
         return;
@@ -3033,7 +3358,7 @@
       const bfLive = !!((mk.state || {}).inplay);
       ouRows.push({ name: evName[mk.marketId] || e.eventId || String(mk.marketId),
         line, over: ouLays.over, under: ouLays.under, marketId: mk.marketId, live: bfLive,
-        corners: isCorners });
+        corners: isCorners, h60: isHockeyTotal });
     });
     log('  DEBUG bfByMarket O/U: mkRows=' + mkRows + ' ouRows=' + ouRows.length + ' skipStatus=' + skippedStatus + ' skipLine=' + skippedLine + ' skipRunners=' + skippedRunners);
     if (DBG) log('  BF-H2H ' + comp + ': ' + rows.length + ' Maerkte' +
@@ -3092,26 +3417,40 @@
     });
     if (gdRows.length)
       if (DBG) log('  BF-H2H ' + comp + ': +' + gdRows.length + ' Go The Distance');
-    const out = { mo: rows, sb: sbRows, sw: swRows, ou: ouRows, oe: oeRows, gd: gdRows, ts: Date.now() };
+    const out = { mo: rows, rt: rtRows, sb: sbRows, sw: swRows, ou: ouRows, oe: oeRows, gd: gdRows, ts: Date.now() };
     bfH2HCache.set(comp, out);
     return out;
   }
   // ---------- Odds-Pipe: Snapshots an die VBSB-App (SQLite) ----------
   const DB_URL = PIPE + '/odds';
 
+  // v9.9.18: dbSend liefert den GRUND mit, nicht nur ja/nein. Befund
+  // 03.10.2026: die Pipe antwortete, aber mit HTTP 500, weil die Indizes
+  // von pvb_odds.db defekt waren ("database disk image is malformed").
+  // "onload -> false" las sich als "App nicht erreichbar" — 2751 Fehl-
+  // versuche an einem Tag, an dem die App die ganze Zeit lief. Jetzt
+  // unterscheidet die Meldung Zeitüberschreitung / Verbindungsfehler /
+  // abgelehnter POST, damit der naechste Fehler benennbar ist.
   function dbSend(snap) {
-    if (typeof GM_xmlhttpRequest === 'undefined') return Promise.resolve(false);
+    if (typeof GM_xmlhttpRequest === 'undefined')
+      return Promise.resolve({ ok: false, grund: 'Tampermonkey-Request nicht verfuegbar' });
     return new Promise(res => {
       GM_xmlhttpRequest({
         method: 'POST', url: DB_URL, data: JSON.stringify(snap),
         headers: { 'content-type': 'application/json' },
         timeout: 4000,
-        onload: r => res(r.status >= 200 && r.status < 300),
-        onerror: () => res(false),
-        ontimeout: () => res(false)
+        onload: r => res(r.status >= 200 && r.status < 300
+          ? { ok: true, grund: 'ok' }
+          : { ok: false, grund: 'App antwortet, POST abgelehnt (HTTP ' + r.status + ')' }),
+        onerror: () => res({ ok: false, grund: 'App nicht erreichbar (Verbindung abgewiesen)' }),
+        ontimeout: () => res({ ok: false, grund: 'App antwortet nicht (Zeitueberschreitung 4 s)' })
       });
     });
   }
+  // Kurzform fuer Aufrufer, die nur boolesch brauchen (dbFlush).
+  // function-Deklaration (nicht const-Pfeil): top-level const liegt im
+  // vm-Sandboxtest nicht auf dem Kontextobjekt, function schon.
+  function dbOk(r) { return !!(r && r.ok); }
 
   // Fire-and-forget POST an die App (Monitoring/Metriken). Darf nie den Scan
   // stoeren oder verzögern — Fehler werden stumm geschluckt.
@@ -3130,7 +3469,7 @@
     let q = [];
     try { q = JSON.parse(localStorage.getItem('vbsb_csarb_queue') || '[]'); } catch (e) { q = []; }
     for (let i = q.length - 1; i >= 0; i--) {
-      if (await dbSend(q[i])) q.splice(i, 1);
+      if (dbOk(await dbSend(q[i]))) q.splice(i, 1);
     }
     // try/catch: Quota-Fehler duerfen den Flush (und damit den Scan-Zyklus)
     // nie abbrechen — die Queue ist dann nur im RAM (analog ui.js-Queue).
@@ -3529,6 +3868,39 @@
     const nid = Number(String(sportNode.nodeId || '').split(':')[1]);
     return Number.isFinite(nid) ? nid : undefined;
   }
+  // ---------- Wettbewerbs- von Platzhalter-Namen trennen (v9.9.3) ----------
+  // Betfair benennt die MENU-Knoten unter einem COMP nach dem KALENDER
+  // ("Fixtures 11 Aug", Australia-Cup-Vorfall) oder nach der RUNDE (Tennis:
+  // "First Round Matches", "Round of 16", "Quarter Final Matches"). Beides
+  // sind KEINE Wettbewerbsnamen — nodeInfo laesst aber den LAENGSTEN Namen
+  // gewinnen, und der Rundenname ist oft genau der laengere.
+  // Befund 30.09.2026 (ATP Beijing): der Tennis-COMP 12834053 wurde als
+  // "first round matches" (19 Zeichen) statt "atp beijing 2026" (16) bewertet.
+  // Damit traf kein Token, und der Guard `!countryHit && !ltDist.some(matchTok)`
+  // in scoreCands verwarf den EINZIGEN Suchtreffer (Miss-Grund 'name', Sample
+  // "first round matches (sid 2)") — die Suche hatte den Treffer, das Scoring
+  // sah nur den falschen Namen. Dieselbe Form trifft WTA Beijing und ATP Tokyo.
+  // Bewusst NICHT pauschal auf "… matches" matchen: Betfair fuehrt die
+  // Freundschafts-Wettbewerbe wirklich als "International Matches" /
+  // "Club Matches" (MATCH_SYN haengt daran) — das sind echte Namen.
+  const PH = /^(fixtures?|all games|all matches|today|tomorrow|upcoming)\b| v /;
+  const RUNDE_RE = new RegExp('^(?:' +
+    '(?:first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\\s+round' +
+    '(?:\\s+of\\s+\\d+)?' +
+    '|round\\s+of\\s+\\d+|round\\s+\\d+' +
+    '|(?:quarter|semi)[-\\s]?finals?' +
+    '|finals?' +
+    '|qualifying|qualifiers?|qualification' +
+    ')(?:\\s+matches?)?$');
+  // Ein leerer Name ist ebenfalls kein Wettbewerbsname. null/undefined werden
+  // ausdruecklich vorher abgefangen: norm(null) liefert hier den String "null"
+  // (String(null)) und wuerde sonst als echter Name durchgehen.
+  const istPlatzhalter = name => {
+    if (name === null || name === undefined) return true;
+    const n = norm(name);
+    return !n || PH.test(n) || RUNDE_RE.test(n);
+  };
+
   async function nodeInfo(cid, log) {
     let c = bfNodeCache.get(cid);
     if (c) return c;
@@ -3536,14 +3908,13 @@
     const nodes = (n && n.nodes) || [];
     const compNode = nodes.find(x => String(x.nodeId || x.id) === 'COMP:' + cid);
     const named = nodes.filter(x => x.name && x !== compNode);
-    // Generische Platzhalter-Namen (Betfair: "Fixtures 11 Aug") und Event-Namen
-    // ("Team A v Team B") sind KEINE Wettbewerbsnamen und duerfen den echten
-    // COMP-Namen nicht ueberschreiben (Vorfall Australia Cup: COMP:12011007 heisst
-    // korrekt "Australia Cup", wurde aber von MENU "Fixtures 11 Aug" verdraengt
-    // -> Discovery-Miss trotz korrekter Such-CID). Fallback auf die alten
-    // Kandidaten, falls nichts "echtes" uebrig bleibt.
-    const PH = /^(fixtures?|all games|all matches|today|tomorrow|upcoming)\b| v /;
-    const isReal = x => x && x.name && !PH.test(norm(x.name));
+    // Generische Platzhalter-Namen (Kalender/Runde/Event) sind KEINE
+    // Wettbewerbsnamen und duerfen den echten COMP-Namen nicht ueberschreiben
+    // (Australia Cup: COMP:12011007 heisst korrekt "Australia Cup", wurde aber
+    // von MENU "Fixtures 11 Aug" verdraengt -> Discovery-Miss trotz korrekter
+    // Such-CID). Fallback auf die alten Kandidaten, falls nichts "echtes"
+    // uebrig bleibt.
+    const isReal = x => x && x.name && !istPlatzhalter(x.name);
     const real = [compNode, ...named].filter(isReal);
     const pool = real.length ? real : [compNode, ...named].filter(x => x && x.name);
     let cn = '';
@@ -3839,7 +4210,13 @@
       if (!r) continue;
       let cn = r.cn;
       const o = r.o;
-      if (!cn) {
+      // Auch ein PLATZHALTER-Name (Runde/Kalender) ist kein Wettbewerbsname:
+      // dann den Namen nachziehen, den die SUCHE selbst geliefert hat (rawLbl).
+      // Genau dieser Pfad lief bisher nur bei leerem cn — mit "first round
+      // matches" blieb der Kandidat namenlos und fiel durch den Token-Guard
+      // (ATP/WTA Beijing, 30.09.2026). Bleibt rawLbl unbrauchbar, steht der
+      // Platzhalter weiter im Miss-Sample (Diagnose bleibt erhalten).
+      if (!cn || istPlatzhalter(cn)) {
         const lcn = rawLbl(o);
         if (lcn) {
           let w = 0;
@@ -4359,6 +4736,130 @@
       new Date(m.lastSeen).toLocaleString('de-DE')).join('\n');
   };
 
+  // ---------- H2H-Mapping-Pruefliste (v9.9.4) ----------
+  // Eine Zuordnung ist nur so gut wie ihre COMP. Betfair buendelt Ligen (die
+  // Handball-Bundesliga liegt als EINE COMP fuer 1. und 2. Liga vor) und
+  // benennt gelegentlich eine ganz andere Stufe. Ein falsches Mapping laeuft
+  // dabei still weiter: die BF-Maerkte kommen ja, sie passen nur nie zum
+  // PIN-Pool — im Log steht dann nur "gematcht/unmatched". Befund 30.09.2026:
+  // pid 212023 "Germany - Bundesliga 2" sass auf COMP:12298986, die sich selbst
+  // "German Bundesliga" nennt (1. Liga). Sichtbar wurde das erst durch
+  // __bfdebug; diese Pruefliste macht daraus einen Griff fuer alle Ligen.
+  // Geprueft werden drei harte Widersprueche (Verdacht) und zwei Hinweise:
+  //   ! kollision  : ZWEI VERSCHIEDENE Turniere haengen an derselben COMP
+  //   ! geschlecht : Damen-Marker nur auf einer Seite
+  //   ! stufe      : Divisionsstufe beidseitig genannt, aber verschieden
+  //   ? stufe      : Stufe nur auf einer Seite genannt
+  //   ? leer       : COMP liefert keine Events (Wettbewerb ohne Maerkte)
+  // Kein Mapping wird dabei geaendert — reine Kontrolle.
+  //
+  // Wichtig (Live-Befund 30.09.2026, erster Lauf): RUNDEN DESSELBEN TURNIERS
+  // teilen sich bewusst eine COMP — der Scanner remappt die Runde selbst per
+  // autoTourLid, und "ATP Cincinnati - R2/QF/Final" auf einer COMP ist genau
+  // so gewollt. Als Kollision zaehlt deshalb nur, was tourKey2 NICHT als
+  // Geschwister erkennt (zwei verschiedene Turniere, z.B. "Germany -
+  // Bundesliga" vs "... Bundesliga 2" oder "Norway - Division 1" vs
+  // "... Eliteserien"). Der erste Lauf meldete sonst 22 von 25 Ligen als
+  // Verdacht, darunter 19-mal reine Runden-Geschwister.
+  const AUDIT_W = /^(w|women|womens|ladies|femenil|femenina|feminina)$/;
+  const auditNameCheck = (pinName, bfName) => {
+    const verdacht = [], hinweis = [];
+    const pt = norm(pinName).split(' ').filter(Boolean);
+    const bt = norm(bfName).split(' ').filter(Boolean);
+    const pN = [...new Set(pt.map(ordNum).filter(Boolean))].join('/');
+    const bN = [...new Set(bt.map(ordNum).filter(Boolean))].join('/');
+    if (pN && bN && pN !== bN) verdacht.push('Stufe ' + pN + ' vs ' + bN);
+    else if (pN !== bN) hinweis.push('Stufe nur bei ' +
+      (pN ? 'PIN (' + pN + ')' : 'COMP (' + bN + ')'));
+    const pD = divLetter(pinName), bD = divLetter(bfName);
+    if (pD && bD && pD !== bD) verdacht.push('Division ' + pD + ' vs ' + bD);
+    else if (pD && !bD) hinweis.push('Division ' + pD + ' nur bei PIN');
+    const pW = pt.some(t => AUDIT_W.test(t)), bW = bt.some(t => AUDIT_W.test(t));
+    if (pW !== bW) verdacht.push('Geschlecht nur bei ' + (pW ? 'PIN' : 'COMP'));
+    return { verdacht, hinweis };
+  };
+  // Runden desselben Turniers (tourKey2-Basis gleich) sind Geschwister, keine
+  // Kollision: die eine COMP traegt dann bewusst mehrere Runden-lids.
+  const auditGleichesTurnier = (a, b) => {
+    const ka = tourKey2(a), kb = tourKey2(b);
+    return !!(ka && kb && ka.base === kb.base);
+  };
+  // opts: { max (0 = alle, Standard 25), nur ('1' = nur Verdacht), q (Filter) }
+  unsafeWindow.__h2haudit = async (opts) => {
+    const o = opts || {};
+    const max = Number(o.max === undefined || o.max === '' ? 25 : o.max);
+    const nur = String(o.nur || '') === '1' || String(o.nur || '') === 'true';
+    const q = norm(o.q || '');
+    const byComp = {};
+    for (const pid of Object.keys(H2H))
+      (byComp[H2H[pid]] = byComp[H2H[pid]] || []).push(String(pid));
+    let list = Object.keys(H2H).map(pid => {
+      const name = H2H_NAMEN[pid] || '';
+      const alle = (byComp[H2H[pid]] || []).filter(p => p !== String(pid));
+      return { pid: String(pid), comp: H2H[pid], name,
+        mit: alle.filter(p => !auditGleichesTurnier(name, H2H_NAMEN[p] || '')),
+        runden: alle.length - alle.filter(p => !auditGleichesTurnier(name, H2H_NAMEN[p] || '')).length };
+    });
+    if (q) list = list.filter(x => norm(x.name).includes(q) || norm(x.pid).includes(q) ||
+      norm(x.comp).includes(q));
+    // Kollisionen zuerst sortieren: so trifft 'max' die auffaelligen Ligen auch
+    // dann, wenn nur ein Ausschnitt geprueft wird.
+    list.sort((a, b) => (b.mit.length - a.mit.length) || a.pid.localeCompare(b.pid));
+    const gesamt = list.length;
+    if (max > 0) list = list.slice(0, max);
+    devlog('H2H-Mapping-Pruefliste: ' + gesamt + ' gemappte Ligen' +
+      (list.length < gesamt ? ', davon ' + list.length + ' geprueft (max ' + max + ')' : '') +
+      ' — COMP-Name und Events werden geladen ...');
+    const cidOf = c => String(c).replace(/^COMP:/, '');
+    // Sammelabrufe werden von Betfair gedrosselt: ein leeres Ergebnis wird
+    // einmal nachgefasst, bevor es als "COMP ohne Daten" gilt.
+    const holeComp = async cid => {
+      for (let i = 0; i < 2; i++) {
+        const r = await bfBynode('COMP:' + cid, 'MENU,EVENT', 3, 200).catch(() => null);
+        if (r && r.nodes && r.nodes.length) return r;
+        if (i === 0) await sleep(500);
+      }
+      return null;
+    };
+    const rows = (await pool(list, async x => {
+      const r = await holeComp(cidOf(x.comp));
+      const nodes = (r && r.nodes) || [];
+      const compNode = nodes.find(n => String(n.nodeId || '') === 'COMP:' + cidOf(x.comp));
+      const compName = (compNode && compNode.name) || '';
+      const events = [...new Set(nodes.filter(n => String(n.nodeId || '').startsWith('EVENT:'))
+        .map(n => n.name).filter(Boolean))];
+      const chk = auditNameCheck(x.name, compName);
+      if (!nodes.length) chk.hinweis.push('COMP ohne Daten (Wettbewerb vorbei oder ohne Maerkte)');
+      else if (!events.length) chk.hinweis.push('keine Events unter der COMP');
+      if (x.mit.length) chk.verdacht.unshift('COMP-Kollision mit PID ' + x.mit.join(', '));
+      return { pid: x.pid, liga: x.name, comp: x.comp, compName,
+        events: events.length, eventNames: events.slice(0, 3), runden: x.runden,
+        verdacht: chk.verdacht, hinweis: chk.hinweis };
+    }, 3)).filter(Boolean);
+    rows.sort((a, b) => (b.verdacht.length - a.verdacht.length) ||
+      (b.hinweis.length - a.hinweis.length) || a.pid.localeCompare(b.pid));
+    let nV = 0, nH = 0;
+    for (const r of rows) { if (r.verdacht.length) nV++; else if (r.hinweis.length) nH++; }
+    devlog('Bilanz: ' + rows.length + ' Ligen — ' + nV + ' Verdacht, ' + nH +
+      ' Hinweis, ' + (rows.length - nV - nH) + ' unauffaellig' +
+      (nur ? ' (angezeigt werden nur die Verdachtsfaelle)' : ''));
+    // 'nur' filtert auch die zurueckgegebenen Zeilen, damit Liste und Log
+    // dasselbe zeigen (die App stellt beides nebeneinander dar).
+    const anzeige = nur ? rows.filter(r => r.verdacht.length) : rows;
+    for (const r of anzeige) {
+      devlog((r.verdacht.length ? '!' : (r.hinweis.length ? '?' : 'ok')) +
+        ' pid ' + r.pid + ' (' + (r.liga || '?') + ') -> ' + r.comp +
+        ' "' + (r.compName || '?') + '" | ' + r.events + ' Event(s)' +
+        (r.eventNames.length ? ': ' + r.eventNames.join(' / ') : '') +
+        (r.runden ? ' | +' + r.runden + ' Runde(n) desselben Turniers' : '') +
+        (r.verdacht.length ? ' | ' + r.verdacht.join(' | ') : '') +
+        (r.hinweis.length ? ' | ' + r.hinweis.join(' | ') : ''));
+    }
+    devlog('Kein Mapping geaendert. Korrektur: GUI -> Einstellungen -> Liga-Mapping.');
+    return { ok: true, gesamt, geprueft: rows.length, verdacht: nV, hinweis: nH,
+      rows: anzeige, nurVerdacht: nur };
+  };
+
   // ---------- Discovery-Vorschlaege: Persistierung (Review-Flow) ----------
   // Jede Discovery-Runde wird nachvollziehbar gehalten: Proposal-Treffer und
   // COMP-Konflikte landen mit Zeitstempel in localStorage. Ueber den GUI-
@@ -4848,7 +5349,7 @@ async function autoTourLid(lid, comp, log) {
           // Kein Worker-Fehler darf spurlos verschwinden: als error-Miss in die
           // Misses-Zeile + Meldung ins Panel (vorher nur in der Konsole).
           log('  ⚠ Fehler ' + L.name + ' (pid ' + L.id + '): ' + (e && e.message || e));
-          missed.push({ kw: L.name.split(' - ')[1] || L.name, reason: 'error',
+          missed.push({ name: L.name, reason: 'error',
             sample: (e && e.message) });
           return;
         }
@@ -4899,7 +5400,12 @@ async function autoTourLid(lid, comp, log) {
         }
         if (pr.reason === 'name' || pr.reason === 'search') missTrack(L.id, L.name, pr.reason);
         if (pr.reason === 'name') hits++;
-        missed.push({ kw: L.name.split(' - ')[1] || L.name, reason: pr.reason, sample: pr.sample });
+        // Miss-Label ist der VOLLE Liga-Name, nicht das Runden-Suffix: vorher
+        // stand fuer "ATP Beijing - R1", "WTA Beijing - R1" und "ATP Tokyo - R1"
+        // dreimal nur "R1" im Log — welches Turnier scheiterte, war damit nicht
+        // diagnostizierbar (Befund 30.09.2026: ATP Beijing blieb ungemappt und
+        // die Miss-Zeile nannte den Namen nirgends).
+        missed.push({ name: L.name, reason: pr.reason, sample: pr.sample });
       }, 3);
       // Sammelzeile der dauerhaften/statischen Denies (v8.44.3) statt je
       // aktiver Deny eine Einzelzeile pro Runde. Kompakt: Zaehler + die ersten
@@ -4922,7 +5428,7 @@ async function autoTourLid(lid, comp, log) {
       }
       log('  ' + sp.name + ': ' + matches + ' Treffer (' + hits + '/' + todo.length +
         ' mit Suchtreffer)' + (missed.length ? ' | Misses: ' +
-        missed.slice(0, 5).map(m => '"' + m.kw + '" ' + m.reason +
+        missed.slice(0, 5).map(m => '"' + m.name + '" ' + m.reason +
           (m.sample ? ' -> ' + m.sample : '')).join(', ') : ''));
       // Lauf-Bilanz dieser Sportart (V7, v9.3.0) einrechnen.
       Object.assign(stats, laufStatsAdd(stats, {
@@ -5752,13 +6258,31 @@ async function autoTourLid(lid, comp, log) {
   };
 
   // ---------- Konsole-Helper: BF-Navigationsbaum inspizieren ----------
-  unsafeWindow.__bfnav = async (bfSid, like) => {
+  unsafeWindow.__bfnav = async (bfSid, like, opts) => {
     const log = devlog;
     const sid = Number(bfSid || 1);
     const groups = await bfNavGroups(sid).catch(() => []);
     log('Sport-Nav ' + sid + ': ' + groups.length + ' Gruppen');
-    for (const g of groups.slice(0, 60)) log('  GRUPPE ' + g.id + ' | ' + g.name);
-    if (groups.length > 60) log('  ... (' + (groups.length - 60) + ' weitere)');
+    // v9.9.9: Die Liste war bei 60 Gruppen abgeschnitten, obwohl die Navigation
+    // deutlich mehr liefert (Soccer: 189). `max` erlaubt jetzt die volle Liste;
+    // Standard bleibt 60, damit ein kurzer Blick nicht 200 Zeilen flutet.
+    //
+    // ACHTUNG, gemessen: Die Kappung war NICHT die Ursache dafuer, dass der
+    // Nachfolger `COMP:12209069` (statt `COMP:11984200`) nicht gefunden wurde
+    // — er steht an Index 28 der sichtbaren 60 und war immer sichtbar. `max`
+    // ist damit eine Bedienungsverbesserung fuer die vollstaendige Sicht,
+    // kein Bugfix.
+    //
+    // Ebenfalls nicht als Toter-COMP-Test brauchbar: die Wurzel enthaelt ueber
+    //wiegend MENU-Knoten. Von 464 gemappten COMPs liegen nur 49 direkt darin
+    // (20 davon MENU, also keine COMPs) — der Rest haengt unter den MENUs. Ein
+    // „fehlt in der Liste“ hiesse also nicht „existiert nicht mehr“, sondern
+    // gaenge zu ~415 Falschpositiven. Fuer Tote-COMPs `__bfverify('cs')`
+    // nehmen (prueft live, OK/REUSED/EMPTY/ERROR).
+    const gMax = Number((opts || {}).max) > 0 ? Number(opts.max) : 60;
+    for (const g of groups.slice(0, gMax)) log('  GRUPPE ' + g.id + ' | ' + g.name);
+    if (groups.length > gMax)
+      log('  ... (' + (groups.length - gMax) + ' weitere — mit max=' + gMax + ' alle)');
     const likeWords = String(like || 'south africa').toLowerCase().split(/\s+/)
       .filter(w => w.length >= 3);
     const comps = await bfNavComps(sid, likeWords).catch(() => []);
@@ -7269,8 +7793,25 @@ if (!hit) continue;
     log('Markt: ' + bfMktName(mk) + ' | status=' +
       JSON.stringify((mk.state || {}).status) + ' inplay=' + !!(mk.state || {}).inplay);
     const fmtL = arr => (arr && arr.length ? arr.map(p => p.price + 'x' + p.size).join(', ') : '(leer)');
+    // v9.9.7: Bei „60 Minute Total Goals" (Eishockey) traegt der Runner die
+    // Torelinie in KEINEM Feld: der Name ist nur „Under"/„Over", und das
+    // `handicap`-Feld ist eine laufende Nummer (0.5 x Paarindex -> 0.5..8.0
+    // bei 16 Paaren), NICHT die Linie (PIN nennt 4.5/5/5.5). Deshalb wird
+    // hier jede Identifikations-Feld mit ausgegeben — selectionId/
+    // handicap/sortOrder sind die Kandidaten fuer die Zuordnung, und ohne
+    // echte Daten waere jede Zuordnung nur geraten.
     for (const ru of (mk.runners || [])) {
+      const d = ru.description || {};
+      const hand = (ru.handicap != null) ? ru.handicap : d.handicap;
+      const extra = [];
+      if (ru.selectionId != null) extra.push('sel=' + ru.selectionId);
+      if (hand != null) extra.push('h=' + hand);
+      if (d.handicap != null) extra.push('d.h=' + d.handicap);
+      if (ru.sortOrder != null) extra.push('sort=' + ru.sortOrder);
+      if (d.selectionType != null) extra.push('typ=' + d.selectionType);
+      if (d.runnerName) extra.push('dName=' + d.runnerName);
       log('  ' + ((ru.description && ru.description.runnerName) || ru.runnerName || ru.selectionId) +
+        (extra.length ? '  [' + extra.join(' ') + ']' : '') +
         '\n    back: ' + fmtL((ru.exchange && ru.exchange.availableToBack) || []) +
         '\n    lay : ' + fmtL((ru.exchange && ru.exchange.availableToLay) || []));
     }
@@ -7400,7 +7941,7 @@ if (!hit) continue;
       out.pin.h = { teams: h2.teams, back: h2.back, live: h2.live, st: h2.st };
       log('  PIN-Eintrag OK (h2h): back=' + h2.back.join('/') +
         ' live=' + !!h2.live + ' start=' + (h2.st || ''));
-      const bfH = await bfH2H(comp, log).catch(() => ({ mo: [], sb: [], sw: [], ou: [], oe: [] }));
+      const bfH = await bfH2H(comp, log).catch(() => ({ mo: [], rt: [], sb: [], sw: [], ou: [], oe: [] }));
       // Tolerantes Event-Matching analog zum H2H-Scanner (findH/halfHit):
       // BF liefert bei Turnier-COMPs (Grand Slam, z.B. US Open „52 Events")
       // Event-Namen mit leichten Abweichungen zu PIN (Kurz-/Initial-Namen,
@@ -7566,6 +8107,36 @@ if (!hit) continue;
         add('bl B', bb > 1.01 ? bb : null, y.lay || null,
           'PIN B (' + h2.teams[1] + ')', 'BF ' + y.nm, '',
           '', (x && isEchteQuote(x.back)) ? x.back : 0);
+      }
+      // Regulaere Spielzeit (v9.9.6, User-Befund Eishockey): BF „60 Minute
+      // 3 Way Match Odds" gegen die PIN-3-Wege-Moneyline derselben Spielzeit
+      // (h2.m60) — Kinds identisch zu den DB-Rows (scan.js h60A/h60D/h60B;
+      // normalisiere_why_kind laesst sie unveraendert durch). Ohne diesen
+      // Block zeigt die Pruefung z.B. fuer „Frolunda HC v Brynas IF" nur die
+      // Moneyline (bl A/bl B), obwohl beide Seiten den 60-Minuten-1X2
+      // fuehren — genau der 01.10.2026 gemeldete Fall.
+      const moRt = (bfH.rt || []).filter(b => evTol(b.name));
+      if (moRt.length) out.bf.rt = moRt.length;
+      for (const rt of moRt) {
+        if (!h2.m60) {
+          log('  KEIN PIN-60-Min-1X2 (keine 3-Wege-Moneyline period >= 5) — ' +
+            'nur die Moneyline geprueft');
+          continue;
+        }
+        const s1r = mScore(h2.teams[0], rt.r0) + mScore(h2.teams[1], rt.r1);
+        const s2r = mScore(h2.teams[0], rt.r1) + mScore(h2.teams[1], rt.r0);
+        let xr = null, yr = null;
+        if (s1r > s2r) { xr = rt.r0; yr = rt.r1; }
+        else if (s2r > s1r) { xr = rt.r1; yr = rt.r0; }
+        else continue;
+        const rtNote = 'regulaere Spielzeit (60 Minuten), nicht die Moneyline';
+        add('h60A', h2.m60.home > 1.01 ? h2.m60.home : null, (xr && xr.lay) || null,
+          'PIN 60 Min 1 (' + h2.teams[0] + ')', 'BF ' + xr.nm, rtNote);
+        add('h60D', h2.m60.draw > 1.01 ? h2.m60.draw : null,
+          (rt.draw && rt.draw.lay) || null,
+          'PIN 60 Min X (Remis)', 'BF ' + ((rt.draw && rt.draw.nm) || 'Draw'), rtNote);
+        add('h60B', h2.m60.away > 1.01 ? h2.m60.away : null, (yr && yr.lay) || null,
+          'PIN 60 Min 2 (' + h2.teams[1] + ')', 'BF ' + yr.nm, rtNote);
       }
       // 1. Halbzeit 2-Wege (v8.81.8): PIN period-1-Moneyline (h2.w[1]) —
       // Betfair fuehrt im h2h-Pfad KEINEN „1st Half"-Markt (nur Soccer-COMPs
@@ -8840,23 +9411,59 @@ if (!hit) continue;
   //   REUSED = COMP-Name weicht ab (anderer Wettbewerb im selben COMP!)
   //   EMPTY  = COMP liefert keine Events
   //   ERROR  = COMP nicht abrufbar
-  unsafeWindow.__bfverify = async (sport) => {
+  unsafeWindow.__bfverify = async (sport, opts) => {
     const log = devlog;
     const section = (sport || 'cs').toLowerCase() === 'h2h' ? 'h2h' : 'cs';
-    log('BF-Verify: Sektion ' + section);
+    // v9.9.10: `von`/`bis` zerlegen den Block in Scheiben. Grund ist nicht
+    // Bequemlichkeit: runCmd hat im Browser ein Budget von 180 s, ein Lauf
+    // ueber 408 COMPs dauert aber 10-20 min und wuerde als Timeout
+    // ausgeliefert — ohne Teil Ergebnis. Zusaetzlich gibt die Funktion nun
+    // ihre Daten zurueck (vorher nur Log + Download), sonst kommt ueber
+    // /cmd gar nichts an.
+    const o = opts || {};
+    const von = Number(o.von) > 0 ? Number(o.von) : 0;
+    const bis = Number(o.bis) > 0 ? Number(o.bis) : 0;
+    log('BF-Verify: Sektion ' + section + (von || bis ? ' | Scheibe ' + von + '-' + bis : ''));
 
-    // Mapping vom lokalen Server laden (App-API: GET /league-map auf Port 8765)
+    // Mapping vom lokalen Server laden (App-API: GET /league-map auf Port 8765).
+    // v9.9.11: hier stand ein nacktes `fetch` — die einzige Stelle im
+    // Userscript, die so etwas tat. Von `https://www.betfair.com` nach
+    // `http://127.0.0.1:8765` ist das ein Mixed-Content-/CORS-Zugriff und
+    // schlaegt fehl, der Fehler wird von `.catch` geschluckt. Die Folge war
+    // „Mapping nicht vom Server ladbar“ und dann der eingebettete Ersatz —
+    // und den gibt es nicht: H2H/CS werden nirgends befuellt, also blieb
+    // `mapping` null und der Lauf endete sofort mit „Kein Mapping
+    // verfuegbar“. __bfverify konnte also **nie** gegen das echte Mapping
+    // laufen. Der Aufruf geht jetzt ueber GM_xmlhttpRequest wie der Rest
+    // (siehe __bfunmap) und meldet einen Fehler explizit statt ihn zu
+    // verschlucken.
     let mapping = null;
+    let mapFehler = '';
     try {
-      const r = await fetch(PIPE + '/league-map').catch(() => null);
-      if (r && r.ok) {
-        const j = await r.json().catch(() => null);
+      const r = await new Promise((res, rej) => {
+        GM_xmlhttpRequest({
+          method: 'GET', url: PIPE + '/league-map', timeout: 15000,
+          onload: r => res(r), onerror: () => rej(new Error('Netzwerk')),
+          ontimeout: () => rej(new Error('Timeout')),
+        });
+      });
+      if (r && r.status === 200) {
+        const j = JSON.parse(r.responseText);
         if (j && j.mapping) mapping = j.mapping;
+        else mapFehler = 'Antwort ohne "mapping" (ok=' + (j && j.ok) + ')';
+      } else {
+        mapFehler = 'HTTP ' + (r && r.status);
       }
-    } catch (e) {}
+    } catch (e) {
+      mapFehler = String((e && e.message) || e);
+    }
     if (!mapping || !mapping[section]) {
-      log('Mapping nicht vom Server ladbar - nutze eingebettete Tabelle');
-      mapping = null;
+      log('FEHLER: Mapping nicht ladbar (' + (mapFehler || 'kein Abschnitt ' + section) +
+          ') — Lauf abgebrochen.');
+      log('Hinweis: GM_xmlhttpRequest muss verfuegbar sein (Tampermonkey). ' +
+          'Ohne Mapping gibt es nichts zu pruefen — die eingebettete ' +
+          'Ersatztabelle ist leer.');
+      return null;
     }
 
     const comps = [];
@@ -8868,13 +9475,22 @@ if (!hit) continue;
       }
     } else {
       log('Kein Mapping verfuegbar. Bitte zuerst Server starten (Scanner).');
-      return;
+      return null;
     }
     log(comps.length + ' COMPs in Mapping-Sektion ' + section);
 
+    // Scheibe bilden. Ohne von/bis bleibt das Verhalten unveraendert.
+    const alle = comps;
+    const start = Math.min(von, alle.length);
+    const ende = bis > 0 ? Math.min(bis, alle.length) : alle.length;
+    const compsScheibe = alle.slice(start, ende);
+    if (von || bis)
+      log('Scheibe: ' + compsScheibe.length + ' von ' + alle.length +
+          ' (Index ' + start + '..' + (ende - 1) + ')');
+
     const results = [];
-    for (let i = 0; i < comps.length; i++) {
-      const c = comps[i];
+    for (let i = 0; i < compsScheibe.length; i++) {
+      const c = compsScheibe[i];
       await sleep(60);
       const j = await bfBynode('COMP:' + c.cid, 'MENU,EVENT', 6, 500).catch(() => null);
       if (!j || !j.nodes) {
@@ -8901,7 +9517,7 @@ if (!hit) continue;
       const marker = status === 'OK' ? '  ' : status === 'REUSED' ? '!!' : status === 'EMPTY' ? '--' : 'XX';
       log(marker + ' pid ' + c.pid + ' (' + c.mappedName + ') [' + status + ']' +
           (liveName ? ' -> live: ' + liveName : '') + ' | ' + events.length + ' Events');
-      if (i % 20 === 19) log('... Fortschritt: ' + (i+1) + '/' + comps.length);
+      if (i % 20 === 19) log('... Fortschritt: ' + (i+1) + '/' + compsScheibe.length);
     }
 
     // Report zaehlen
@@ -8909,6 +9525,8 @@ if (!hit) continue;
     for (const r of results) counts[r.status] = (counts[r.status] || 0) + 1;
     log('\n=== VERIFY-REPORT (' + section + ') ===');
     for (const [s, n] of Object.entries(counts)) log('  ' + s + ': ' + n);
+    log('Scheibe ' + start + '..' + (ende - 1) + ' von ' + alle.length +
+        (ende >= alle.length ? ' (vollstaendig)' : ' (REST NOCH OFFEN)'));
 
     const blob = new Blob([JSON.stringify({ section, counts, results }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -8917,6 +9535,10 @@ if (!hit) continue;
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
     log('Download: verify_report_' + section + '.json');
+    // v9.9.10: als Daten zurueckgeben, damit der Lauf ueber /cmd
+    // auswertbar ist (vorher: nur Logzeilen + Blob-Download im Browser).
+    return { section, von: start, bis: ende - 1, gesamt: alle.length,
+             vollstaendig: ende >= alle.length, counts, results };
   };
 
   // ---------- Konsole-Helper: SPORT-Knoten-Erkennung verifizieren ----------
@@ -8953,6 +9575,70 @@ if (!hit) continue;
     }
   };
 
+  // ---------- Konsolen-Helper: PIN-Sportart je Liga (v9.9.17) ----------
+  // __pinsport('220076,201501') -> { sport: {pid: 'Soccer'}, fehlend: [...], ... }
+  //
+  // Anlass: der Blind-Ligen-Dialog brauchte die Sportart je Zeile, und die
+  // naheliegenden Quellen taugen nicht:
+  //   * `sport_types.json` ist die **Betburger**-Tabelle (7 = "Fußball",
+  //     29 = "Beachvolleyball"), KEINE Pinnacle-Sport-ID. Spain - Primera
+  //     Federacion traegt im Mapping psid=29 und wurde davon als
+  //     "Beachvolleyball" ausgegeben — eine erfundene Tatsache aus einer
+  //     fremden Tabelle, genau die Fehlerklasse, die main.js bei
+  //     sportVonLiga kommentiert.
+  //   * `odds_history.sport` ist bei 19 der 21 blinden Ligen leer (sie
+  //     liefern ja keine Quoten — das ist der Befund).
+  //   * die Namens-Regex aus sportVonLiga ist im Userscript, nicht in Python.
+  //
+  // Die Quelle ist deshalb PIN selbst: `/sports` + `/sports/{sid}/leagues`.
+  //
+  // v9.9.17 (gemessen, nicht geraten): `findSports()` ist hier die FALSCHE
+  // Quelle. Deren Regex (tennis|basketball|esport|…|snooker) enthaelt kein
+  // „soccer“ — Soccer faellt durch, weil Fussball-Ligen ueber die
+  // cs-Sektion laufen und nicht ueber den Discovery-Walk. Genau die 21
+  // blinden Ligen dieses Dialogs sind Soccer; `findSports()` haette fuer
+  // sie jede Sportart als „unbekannt“ gemeldet. Deshalb hier die Rohliste
+  // von `/sports`.
+  unsafeWindow.__pinsport = async (pidsCsv) => {
+    const log = devlog;
+    const want = new Set(String(pidsCsv || '').split(/[,;\s]+/)
+      .map(s => s.trim()).filter(Boolean));
+    // Achtung Praezedenz: `(await ...) || [].map(...)` haette den Member-Zugriff
+    // ans LEERE Array gehaengt (`.map` bindet staerker als `||`) und die
+    // Roh-Eintraege unveraendert durchgelassen — gemessen: sid undefined,
+    // 0 von 21 Ligen aufgeloest. Die Klammern um das await sind Pflicht.
+    const sports = ((await pinGet('/sports').catch(() => [])) || [])
+      .map(s => ({ sid: s.id, name: s.name }));
+    log('PIN-Sport: ' + sports.length + ' Sportarten, ' + want.size +
+        ' Liga(n) angefragt');
+    const out = {};
+    const offen = new Set(want);
+    for (const s of sports) {
+      if (!offen.size) break;
+      const list = await getLeaguesCached(s.sid).catch(() => []);
+      for (const l of (list || [])) {
+        const lid = String((l && (l.id !== undefined ? l.id : l.leagueId)) || '');
+        if (!lid || !offen.has(lid)) continue;
+        offen.delete(lid);
+        // PINs eigener Sportname ist die autoritative Bezeichnung;
+        // PIN_SID_SPORT ist der Anzeige-Vokabular des Userscripts.
+        const name = s.name || (typeof PIN_SID_SPORT !== 'undefined'
+          ? (PIN_SID_SPORT[s.sid] || '') : '') || ('sid ' + s.sid);
+        out[lid] = name;
+        // Fuellt nebenbei WALK_SID (pid -> PIN-sport-id), damit
+        // sportVonLiga diese Ligen ohne Namens-Heuristik aufloest.
+        try { WALK_SID.set(lid, s.sid); } catch (e) {}
+      }
+    }
+    const fehlend = [...offen];
+    log('PIN-Sport: ' + Object.keys(out).length + ' Ligen aufgeloest' +
+        (fehlend.length ? ', ' + fehlend.length + ' unbekannt (PID evtl. abgeschaltet)'
+                        : ''));
+    for (const p of want) log('  ' + p + ': ' + (out[p] || 'unbekannt'));
+    return { sport: out, fehlend, angefragt: want.size,
+             sportarten: sports.length };
+  };
+
   // ---------- Tool-Registry (Debug-Werkzeuge) ----------
   // Zentrale Liste aller Dev-/Probe-Tools. Der GUI-Dialog "Dev-Tools",
   // __tools__() und (kuenftig) URL-Trigger werden daraus generiert:
@@ -8986,9 +9672,10 @@ if (!hit) continue;
     // EventType-ID anzeigen (Gruppen + COMPs + Roh-Antworten). War vorher nur
     // als Aktion im bfmapping-Bundle verfuegbar, fehlte aber in der Tool-Liste
     // als direkter Eintrag (User-Wunsch, Darts-Recherche via __bfnav(3503)).
-    { id: 'bfnav', group: 'mapping', label: 'BF-Navigationsbaum (bfnav)', desc: 'Navigationsbaum einer Betfair-Sport-ID anzeigen: Gruppen, COMPs (mit COMP-ID + Name) und Roh-Antworten der Wurzel — z.B. __bfnav(3503) fuer Darts.',
-      params: [{ k: 'bfSid', label: 'BF-Sport-ID', v: '3503' }, { k: 'q', label: 'Query (COMP-Suche)', v: 'darts' }],
-      run: a => unsafeWindow.__bfnav(a.bfSid, a.q) },
+    { id: 'bfnav', group: 'mapping', label: 'BF-Navigationsbaum (bfnav)', desc: 'Navigationsbaum einer Betfair-Sport-ID anzeigen: Gruppen, COMPs (mit COMP-ID + Name) und Roh-Antworten der Wurzel — z.B. __bfnav(3503) fuer Darts. v9.9.9: `max` hebt die Kappung bei 60 Gruppen auf (Soccer liefert 189). Die Liste ist aber KEIN Toter-COMP-Test — die meisten Ligen haengen unter MENU-Knoten, ein Fehlen hiesse nur „nicht direkt an der Wurzel“. Fuer Tote-COMPs `bfmapping`/`bfverify` (prueft live, OK/REUSED/EMPTY/ERROR).',
+      params: [{ k: 'bfSid', label: 'BF-Sport-ID', v: '3503' }, { k: 'q', label: 'Query (COMP-Suche)', v: 'darts' },
+        { k: 'max', label: 'Max. Gruppen (0 = alle)', v: '60' }],
+      run: a => unsafeWindow.__bfnav(a.bfSid, a.q, { max: Number(a.max) || 60 }) },
     // Generisches Liga-/COMP-Pflege-Tool: bündelt die frueheren Mapping-
     // Einzel-Buttons (bfnav/bfunmap/bfverify/bfsearch/bfsport/bfcapture) ueber
     // ein Aktionen-Dropdown — gleiche Signatur (kompakt) statt 6 Tools mit
@@ -9003,6 +9690,8 @@ if (!hit) continue;
           { v: 'capture', label: 'COMP-Capture (absaugen)' },
           { v: 'unmap', label: 'Mapping entfernen' }] },
         { k: 'section', label: 'Sektion (verify)', v: 'cs' },
+        { k: 'von', label: 'Scheibe von (Index, 0 = ganz)', v: '0' },
+        { k: 'bis', label: 'Scheibe bis (Index, 0 = ganz)', v: '0' },
         { k: 'q', label: 'Query (search/nav)', v: 'Australia Cup' },
         { k: 'max', label: 'Max (search)', v: '20' },
         { k: 'bfSid', label: 'BF-Sport-ID (nav)', v: '1' },
@@ -9012,11 +9701,12 @@ if (!hit) continue;
       run: a => {
         switch (a.akt) {
           case 'search': return unsafeWindow.__bfsearchRaw(a.q, a.max);
-          case 'nav': return unsafeWindow.__bfnav(a.bfSid, a.q);
+          case 'nav': return unsafeWindow.__bfnav(a.bfSid, a.q, { max: Number(a.max) || 60 });
           case 'sport': return unsafeWindow.__bfsport(a.cid);
           case 'capture': return unsafeWindow.__bfcapture(a.cmd);
           case 'unmap': return unsafeWindow.__bfunmap(a.pid);
-          default: return unsafeWindow.__bfverify(a.section === 'h2h' ? 'h2h' : 'cs');
+          default: return unsafeWindow.__bfverify(a.section === 'h2h' ? 'h2h' : 'cs',
+                       { von: Number(a.von) || 0, bis: Number(a.bis) || 0 });
         }
       } },
     { id: 'pinlive', group: 'live', label: 'PIN Live-Erkennung', desc: 'Live-Felder aller Matchups einer PIN-Liga.',
@@ -9093,8 +9783,48 @@ if (!hit) continue;
     { id: 'pinwalk', group: 'snapshot', label: 'PIN-Komplett-Crawler', desc: 'Ligen->Matchups->straight Crawler mit generischer Key-Extraktion (JSON-Download).',
       params: [{ k: 'sport', label: 'Sport', v: 'soccer' }, { k: 'opts', label: 'Opts (JSON)', v: '' }],
       run: a => unsafeWindow.__pinwalk(a.sport, a.opts) },
+    { id: 'pinsport', group: 'discovery', label: 'PIN-Sportart je Liga', desc: 'Sportart fuer PIN-Ligen (pid, kommagetrennt) aus PINs eigener Liga-Liste je Sportart (/sports + /sports/{sid}/leagues). Nennt die fehlenden pids ausdruecklich — eine nicht gelieferte Liga heisst "kein Treffer in der Liste", nicht "keine Sportart". v9.9.17:Quelle des Dialogs "Blinde Ligen" fuer die Sportart-Spalte; NICHT sport_types.json (das ist die Betburger-Tabelle, 29 = Beachvolleyball, nicht "Soccer").',
+      params: [{ k: 'pids', label: 'PIN-Liga-IDs (Komma)', v: '220076,201501' }],
+      run: a => unsafeWindow.__pinsport(a.pids) },
     { id: 'misses', group: 'discovery', label: 'Discovery-Misses', desc: 'Persistierte Discovery-Misses (pid, name, reason, count, lastSeen) auflisten.',
       params: [], run: () => devlog(unsafeWindow.__misses()) },
+    // v9.9.2: die drei Discovery-Auskuenfte, die es bisher NUR als
+    // Konsolen-Helfer gab (__denys/__klassen/__promotes), sind jetzt
+    // Werkzeuge — erreichbar im Panel-Dropdown ("Dev-Tools" -> Discovery /
+    // H2H) UND ueber den /cmd-Weg aus dem Werkzeuge-Fenster der App. Anlass:
+    // fuer jede Konsolenzeile musste das Userscript neu geladen werden.
+    { id: 'denys', group: 'discovery', label: 'Deny-Liste (alle Ebenen)', desc: 'Alle aktiven Deny-Bloecke (Registry aus deny_mapping.json + lokal Gelerntes) mit pid|COMP, kind, Klasse und Ablauf.',
+      params: [], run: () => devlog(unsafeWindow.__denys()) },
+    { id: 'klassen', group: 'discovery', label: 'Gelernte Verwechslungsklassen', desc: 'Je Zeile pid -> gelernte Verwechslungsart (z.B. state-level), aus der Registry und lokal Gelerntem.',
+      params: [], run: () => devlog(unsafeWindow.__klassen()) },
+    { id: 'promotes', group: 'discovery', label: 'Auto-Deny-Promotions', desc: 'Konflikt-Paare, die die 3x-Schwelle ein zweites Mal erreicht haben (=> dauerhaft gesetzt).',
+      params: [], run: () => devlog(unsafeWindow.__promotes()) },
+    // v9.9.4: Kontrolle der H2H-Mappings gegen die ECHTE COMP. Anlass: pid
+    // 212023 "Germany - Bundesliga 2" sass auf COMP:12298986 ("German
+    // Bundesliga", 1. Liga) — im Scan nur als unmatched-Rauschen sichtbar,
+    // auffindbar erst per __bfdebug von Hand. Diese Pruefliste macht daraus
+    // einen Griff fuer alle gemappten Ligen (Kollision/Stufe/Geschlecht).
+    { id: 'h2haudit', group: 'discovery', label: 'H2H-Mapping-Pruefliste', desc: 'Prueft jede gemappte H2H-Liga gegen den ECHTEN Betfair-COMP-Namen: COMP-Kollisionen (mehrere PIN-Ligen auf einer COMP), Stufen- und Geschlechts-Widerspruch sowie leere COMPs. Zeigt Namen und Events der COMP zum Gegenlesen — aendert kein Mapping.',
+      params: [{ k: 'max', label: 'Max. Ligen (0 = alle)', v: '25' },
+        { k: 'nur', label: 'Nur Verdacht (1/0)', v: '1' },
+        { k: 'q', label: 'Filter (Name/PID/COMP)', v: '' }],
+      run: a => unsafeWindow.__h2haudit({ max: a.max, nur: a.nur, q: a.q }) },
+    // Werkzeug-Registry als Daten (v9.9.2): Das Werkzeuge-Fenster der App
+    // braucht die Liste der verfuegbaren Werkzeuge samt Parametern, um sie
+    // ohne Userscript-Neustart anbieten zu koennen. `hidden` haelt den
+    // Eintrag aus dem Panel-Dropdown und aus __tools() heraus — er ist nur
+    // der Transportweg (__tools() bleibt die Konsolen-Sicht).
+    { id: 'toollist', group: 'diagnose', hidden: true, label: 'Werkzeug-Liste (GUI)', desc: 'Liefert die registrierten Werkzeuge als Daten (id, Label, Gruppe, Parameter) an die App.',
+      params: [],
+      run: () => TOOLS.filter(t => !t.hidden).map(t => ({
+        id: t.id, label: t.label, group: t.group || '',
+        groupLabel: toolGroupLabel(t.group),
+        desc: t.desc || '',
+        params: (t.params || []).map(p => ({
+          k: p.k, label: p.label, v: p.v || '',
+          options: (p.options || []).map(o => ({ v: o.v, label: o.label })),
+        })),
+      })) },
     // V1 (v9.0.6): Nachhol-Weg fuer den Lernstand. Alles, was vor v9.0.6 nur
     // im localStorage dieses Browserprofils lag (Auto-Denys und promotete
     // Perm-Denys), wird einmal an die App gemeldet und landet dauerhaft in
@@ -9146,10 +9876,13 @@ if (!hit) continue;
     const row = TOOL_GROUP_LABELS.find(r => r[0] === g);
     return row ? row[1] : g;
   };
+  // hidden-Tools (v9.9.2, z.B. toollist) sind reine Transportwege fuer die
+  // App und tauchen in keiner Bedienliste auf.
+  const toolsSichtbar = () => TOOLS.filter(t => !t.hidden);
   const toolsGrouped = () => TOOL_GROUP_LABELS
-    .map(([g]) => TOOLS.filter(t => t.group === g))
+    .map(([g]) => toolsSichtbar().filter(t => t.group === g))
     .reduce((a, b) => a.concat(b), [])
-    .concat(TOOLS.filter(t => !t.group));
+    .concat(toolsSichtbar().filter(t => !t.group));
   // Konsole: Liste aller Tools nach Gruppe anzeigen
   unsafeWindow.__tools = () => toolsGrouped()
     .map(t => '[' + toolGroupLabel(t.group) + '] ' + t.id + ' - ' + t.label)
@@ -10236,6 +10969,16 @@ for (const cp of crossPairs2) {
       if (ouMlIds.length) {
         let ouHits = 0;
         for (const { h, b } of ous) {
+          // Hockey-Tore-Totals der REGULAREN Spielzeit (v9.9.7): BF traegt die
+          // Linie in keinem Feld (Runner nur „Under"/„Over", `handicap` ist die
+          // Laufnummer 0.5xPaarindex -> 0.5…8.0 bei 16 Paaren; PIN nennt
+          // 4.5/5/5.5 auf `period 6`). Ohne belegte Zuordnung wuerde der
+          // Matcher unten eine PIN-Linie (z.B. 4.5) gegen eine BF-Laufnummer
+          // (z.B. 4.5 aus Paar 9) paaren — das waere ein Zufallstreffer,
+          // kein belegter Markt. Deshalb werden diese Zeilen hier bewusst
+          // verworfen, bis die Zuordnung an echten Daten geklaert ist
+          // (b.h60 gesetzt in bfH2H). Lieber keine Zeile als eine falsche.
+          if (b.h60) continue;
           // Corners-Maerkte laufen gegen den PIN-Corners-Kanal (h.cornersOu aus
           // dem lg-straight), alle uebrigen O/U (Tore/Goals) gegen ouGoals aus
           // dem Kern-straight -- nie vermischt (8.5-Kollision, wie im H2H-Pfad).
@@ -10848,6 +11591,21 @@ for (const cp of crossPairs2) {
     const w1 = p.w && p.w[1];
     if (!w1) return 0;
     const a = w1[0], bb = w1[1];
+    // v9.9.26/v9.9.27: Ist die 1.-HZ-ML BITIDENTISCH mit der Ganzspiel-ML, dann
+    // zeigt `w[1]` nicht auf einen Abschnitts-, sondern auf denselben Markt wie
+    // `p.back` (Pinnacle vergibt Rugby-/Basketball-Halbzeiten denselben
+    // Marktnamen; bei fehlender Ganzspiel-ML rutscht der einzige Kandidat in
+    // beide Slots). Live-Befund 03.10.2026, Rugby Top 14 „Bordeaux v Lyon“:
+    // blA/blB und bl1hA/bl1hB standen mit 1.0924214417744917 / 6.72 in der
+    // DB — die 1.-HZ-ML wurde dadurch als Ganzspiel gegen den Betfair-
+    // Vollzeit-ML gehalten. Solche Zeilen werden hier **verworfen**, damit
+    // der Vollzeit-Kanal und der 1.-HZ-Kanal niemals denselben Preis tragen.
+    // Die Pruefung selbst liegt als reine Funktion in matching.js
+    // (`periodenMix`), weil scan.js nicht node-testbar ist.
+    if (periodenMix(w1, p.back)) {
+      if (DBG) log('  DEBUG 1.HZ[' + lid + '] ' + name + ' VERWORFEN: PIN-1.-HZ == Ganzspiel-ML (' + a + '/' + bb + ') — Perioden-Mix, kein eigener Abschnitts-Markt');
+      return 0;
+    }
     if (!(a > 1.01) && !(bb > 1.01)) return 0;
     const tag = hint ? ' (' + hint + ')' : '';
     let n = 0;
@@ -10874,7 +11632,7 @@ for (const cp of crossPairs2) {
       pinH2H(lid, log),
       bfH2H(comp, log).catch(e => {
         try { devlog('bfH2H[' + comp + '] Fehler: ' + ((e && e.message) || e)); } catch (e2) {}
-        return { mo: [], sb: [], sw: [], ou: [], oe: [] };
+        return { mo: [], rt: [], sb: [], sw: [], ou: [], oe: [] };
       })
     ]);
     // Turnier-Runde auf PIN in mehrere Lids gesplittet (v8.62.6): solange das
@@ -10977,7 +11735,7 @@ for (const cp of crossPairs2) {
       log('  => 0 gematcht (keine PIN-Spiele)');
       return { pin: 0, bf: 0, hit: 0 };
     }
-    if (!bf.mo.length && !(bf.sb || []).length && !(bf.sw || []).length && !(bf.ou || []).length && !(bf.oe || []).length && !(bf.gd || []).length) {
+    if (!bf.mo.length && !(bf.sb || []).length && !(bf.sw || []).length && !(bf.ou || []).length && !(bf.oe || []).length && !(bf.gd || []).length && !(bf.rt || []).length) {
       // v8.79.13: Auch bei komplett leerer BF-COMP die PIN-only-Rows fuer den
       // DB-Schnellpfad schreiben (alle PIN-Spiele sind ohne BF-Event) — sonst
       // braucht der Boost-Check diese Ligen immer den Browser-why-Pull.
@@ -11134,6 +11892,46 @@ for (const cp of crossPairs2) {
       if (!b.hadDraw) {
         pushBB('bbA', 'PIN A + BF B', a, y.back, y.volB);
         pushBB('bbB', 'PIN B + BF A', bb, x.back, x.volB);
+      }
+    }
+    // ---------- Regulaere Spielzeit (Eishockey 1X2 der 60 Minuten, v9.9.6) ----------
+    // Zweiter Markt derselben Partie, den BEIDE Seiten fuehren: Betfair
+    // „60 Minute 3 Way Match Odds" (EVENT:36133724 live geprueft), Pinnacle
+    // die 3-Wege-Moneyline derselben Spielzeit (h.m60, period >= 5).
+    // Der Kanal ist bewusst NICHT die Moneyline (die schliesst die
+    // Verlaengerung ein) und benutzt deshalb eigene Kinds (h60A/h60D/h60B):
+    // die h3*-Familie ist im Boost-Solver Soccer-Vollzeit (h3A ∧ bttsN =
+    // „gewinnt zu Nil" usw.) und wuerde mit 60-Minuten-Preisen falsche
+    // Kombinationen rechnen. Ohne diesen Block pruefte der Scanner nur die
+    // Moneyline — der 60-Minuten-Markt fiel komplett durch.
+    let rtHit = 0;
+    for (const rt of bf.rt || []) {
+      const nb = norm(rt.name);
+      if (!leagueW && womenMark(nb)) continue;
+      const h = findH(nb, rt.name);
+      if (!h || !h.m60) continue;
+      // Seitenzuordnung ueber die PIN-Teamnamen (r0/r1 sind BF-Reihenfolge).
+      const s1 = mScore(h.teams[0], rt.r0) + mScore(h.teams[1], rt.r1);
+      const s2 = mScore(h.teams[0], rt.r1) + mScore(h.teams[1], rt.r0);
+      let x = null, y = null;
+      if (s1 > s2) { x = rt.r0; y = rt.r1; }
+      else if (s2 > s1) { x = rt.r1; y = rt.r0; }
+      else continue;
+      const sides = [
+        ['h60A', x, h.m60.home, '1 (' + h.teams[0] + ')'],
+        ['h60D', rt.draw, h.m60.draw, 'X'],
+        ['h60B', y, h.m60.away, '2 (' + h.teams[1] + ')'],
+      ];
+      for (const [kind, bfr, back, side] of sides) {
+        if (!isEchteQuote(back) || !bfr) continue;
+        if (!isEchteQuote(bfr.lay)) continue;
+        rtHit++;
+        // xback bleibt 0: bei drei Ausgaengen ist der Back EINES Runners kein
+        // Komplement (¬M besteht aus zwei Ausgaengen) — ein Back-Back-Cross
+        // waere hier nicht wasserdicht.
+        pushRow(rows, lid, { name: rt.name, hit: h, b: rt, kind,
+          back, src: 'PIN 60 Min ' + side + ' / BF 60 Minute 3 Way Match Odds',
+          lay: bfr.lay, vol: bfr.volL, xback: 0 });
       }
     }
     if (bf.mo.length && hit === 0) {
@@ -11499,13 +12297,13 @@ for (const cp of crossPairs2) {
         }
       }
     }
-    const bfTotal = bf.mo.length + bf.sb.length + bf.sw.length + (bf.ou || []).length +
-      (bf.oe || []).length + (bf.gd || []).length;
-    log('  => gematcht: ' + (hit + sbHit + swHit + ouHit + oeHit + gdHit) + ' von ' + bfTotal +
+    const bfTotal = bf.mo.length + (bf.rt || []).length + bf.sb.length + bf.sw.length +
+      (bf.ou || []).length + (bf.oe || []).length + (bf.gd || []).length;
+    log('  => gematcht: ' + (hit + rtHit + sbHit + swHit + ouHit + oeHit + gdHit) + ' von ' + bfTotal +
       ' BF-Maerkten' +
       (skipped ? ' (' + skipped + ' anderes Geschlecht uebersprungen)' : '') +
-      ((hit + sbHit + swHit + ouHit + oeHit + gdHit) < bfTotal - skipped ?
-        ' | ' + (bfTotal - skipped - hit - sbHit - swHit - ouHit - oeHit - gdHit) + ' UNMATCHED' : ''));
+      ((hit + rtHit + sbHit + swHit + ouHit + oeHit + gdHit) < bfTotal - skipped ?
+        ' | ' + (bfTotal - skipped - hit - rtHit - sbHit - swHit - ouHit - oeHit - gdHit) + ' UNMATCHED' : ''));
     return { pin: Object.keys(pin).length, bf: bfTotal, hit: hit + sbHit + swHit + ouHit + oeHit + gdHit };
   }
 
@@ -11556,6 +12354,7 @@ for (const cp of crossPairs2) {
     sw2BBA: 'Satz 2 Winner BB A', sw2BBB: 'Satz 2 Winner BB B',
     h3A: 'H2H 3-Way Home', h3D: 'H2H 3-Way Draw', h3B: 'H2H 3-Way Away',
     h3hA: 'HT 3-Way Home', h3hD: 'HT 3-Way Draw', h3hB: 'HT 3-Way Away',
+    h60A: 'H2H 60-Min 1X2 Heim', h60D: 'H2H 60-Min 1X2 Remis', h60B: 'H2H 60-Min 1X2 Auswärts',
     ahA: 'AH -0.5 A', ahB: 'AH -0.5 B', dnA: 'AH 0 (DNB) A', dnB: 'AH 0 (DNB) B',
     dcA: 'AH +0.5 (1X) A', dcB: 'AH +0.5 (X2) B',
     dnbH: 'DNB Home', dnbA: 'DNB Away', dnbCross: 'DNB Cross-Arb',
@@ -11991,6 +12790,42 @@ for (const cp of crossPairs2) {
     }
     // Range-Rows nur als Fallback fuer Linien, die nicht schon als Standard-O/U
     // vorliegen (Standard-Markt hat auch die Under-Seite -> bevorzugt).
+    for (const r of ranges) {
+      if (!covered.has(r.line) && r.over > 1.01)
+        out.push({ line: r.line, over: r.over, under: 0, range: true });
+    }
+    return out;
+  };
+  // Wie `ouGoals`, aber ohne die Perioden-Beschraenkung auf 0: der Aufrufer
+  // hat die Maerkte schon vorgefiltert (v9.9.7 fuer die Hockey-Totals der
+  // regulaeren Spielzeit auf `period 6`). Bewusst KEIN Parameter fuer die
+  // Periode — die Auswahl gehoert an den Aufrufer, sonst koennte hier
+  // versehentlich ein Ganzspiel-Total und ein 60-Minuten-Total vermischt
+  // werden (die Verlaengerungs-Falle aus v9.9.6).
+  const ouGoalsMitPeriode = pr => {
+    const out = [], ranges = [], covered = new Set();
+    for (const m of (pr || [])) {
+      if (!m || m.type !== 'total') continue;
+      const tp = {};
+      let range = null;
+      for (const p of (m.prices || [])) {
+        const d = desig(p);
+        if ((d === 'over' || d === 'under') && typeof p.price === 'number') tp[d] = p.price;
+        if (p.points != null && typeof p.points === 'number' && !tp.line) tp.line = p.points;
+        const rm = /^(\d+)\+$/.exec(d.replace(/^pinnacle\s+/, ''));
+        if (rm && typeof p.price === 'number') {
+          const n = Number(rm[1]);
+          if (!range || n > range.topN) range = { topN: n, price: p.price };
+        }
+      }
+      const over = toDecU(tp['over']), under = toDecU(tp['under']);
+      if (over > 1.01 && under > 1.01 && typeof tp.line === 'number' && tp.line >= 0.5) {
+        out.push({ line: tp.line, over, under });
+        covered.add(tp.line);
+      } else if (range && !tp['over'] && !tp['under']) {
+        ranges.push({ line: range.topN - 0.5, over: toDecU(range.price) });
+      }
+    }
     for (const r of ranges) {
       if (!covered.has(r.line) && r.over > 1.01)
         out.push({ line: r.line, over: r.over, under: 0, range: true });
@@ -12964,9 +13799,9 @@ for (const cp of crossPairs2) {
         const partial = makeSnapshot(rows, games);
         if (!partial.candidates.length) return;
         partial.partial = true; // Teilsnapshot: Pipe per UPSERT, kein DELETE
-        const ok = await dbSend(partial);
-        if (ok && !quiet) log('DB: Zwischenstand gesendet (' + partial.candidates.length + ' Kandidaten).');
-        else if (!ok) log('DB: Zwischenstand nicht gesendet (App nicht erreichbar).');
+        const res = await dbSend(partial);
+        if (res.ok && !quiet) log('DB: Zwischenstand gesendet (' + partial.candidates.length + ' Kandidaten).');
+        else if (!res.ok) log('DB: Zwischenstand nicht gesendet — ' + res.grund + '.');
       };
       let i = 0;
       let scanErrors = 0;
@@ -13112,8 +13947,8 @@ for (const cp of crossPairs2) {
         }
       }
       state.busy = false;
-      const dbOk = await dbSend(snap);
-      if (!dbOk) {
+      const dbRes = await dbSend(snap);
+      if (!dbRes.ok) {
         let q = [];
         try { q = JSON.parse(localStorage.getItem('vbsb_csarb_queue') || '[]'); } catch (e) { q = []; }
         q.push(snap);
@@ -13121,7 +13956,7 @@ for (const cp of crossPairs2) {
         // unbegrenzt wachsen und die localStorage-Quota sprengen (setItem wirft).
         q = q.slice(-QUEUE_MAX);
         try { localStorage.setItem('vbsb_csarb_queue', JSON.stringify(q)); } catch (e) { /* Quota voll - Queue nur im RAM */ }
-        log('DB: App nicht erreichbar - Snapshot gequeued (' + q.length + ').');
+        log('DB: Snapshot nicht gespeichert — ' + dbRes.grund + ' (gequeued ' + q.length + ').');
       } else {
         log('DB: Snapshot gespeichert (' + snap.candidates.length + ' Kandidaten).');
       }
@@ -13609,11 +14444,14 @@ for (const cp of crossPairs2) {
       const order = ['diagnose', 'probes', 'mapping', 'snapshot', 'live', 'discovery'];
       const used = {};
       const groups = [];
+      // hidden-Tools (v9.9.2, z.B. toollist) sind nur Datentransport fuer die
+      // App — im Panel-Dropdown waeren sie eine zweite, nutzlose Listenansicht.
+      const sichtbar = TOOLS.filter(t => !t.hidden);
       for (const g of order) {
-        const list = TOOLS.filter(t => t.group === g);
+        const list = sichtbar.filter(t => t.group === g);
         if (list.length) { used[g] = 1; groups.push([g, labels[g], list]); }
       }
-      const ungrouped = TOOLS.filter(t => !used[t.group]);
+      const ungrouped = sichtbar.filter(t => !used[t.group]);
       if (ungrouped.length) groups.push(['', 'Übrige', ungrouped]);
       return groups;
     }

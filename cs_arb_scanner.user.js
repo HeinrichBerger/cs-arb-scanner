@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.9.31
-// @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765).
+// @version      9.9.57
+// @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
+// @match        https://sports2.bet-at-home.de/*
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        GM_info
@@ -349,6 +350,7 @@
     "atmosfera mazeikiai": "fk atmosfera",
     "austria vienna": "austria wien",
     "austria vienna ii": "austria wien a",
+    "azul claro numazu": "ac numazu",
     "b 93": "b93 copenhagen",
     "babrungas plunge": "fk babrungas",
     "banga gargzdai": "fk banga gargzdu",
@@ -471,6 +473,7 @@
     "louisville city": "louisville fc",
     "ludogorets razgrad ii": "ludogorets razgrad b",
     luleaa: "ifk lulea",
+    "lustenau 1907": "fc lustenau",
     "lyn ii": "lyn 2",
     "m'gladbach": "borussia monchengladbach",
     "maardu linnameeskond": "fc maardu",
@@ -593,6 +596,7 @@
     "william o connor": "william oconnor",
     wolves: "wolverhampton",
     "wsg tirol": "wsg wattens",
+    "wydad ac": "wydad casablanca",
     "wydad fes": "waf widad fes",
     "wydad temara": "widad temara",
     "yantra gabrovo": "fc yantra",
@@ -1135,6 +1139,13 @@
   // kein automatischer Scan. Betfair behaelt das volle Verhalten. Der Fehler-Stats-Flush
   // laeuft seit v7.86.2 auf BEIDEN Seiten (der PIN-Tab zaehlt eigene Helper-Calls mit).
   const IS_BETFAIR = /betfair\.com/.test(location.hostname);
+  // v9.9.39: Dritte Domain — bet-at-home. Wird als QUELLE gelesen, nicht
+  // gescannt: der Hook liest nur den Store der Buchmacher-Seite (kein
+  // eigener HTTP-Request, kein Auto-Loop). Wichtig: IS_BETFAIR bleibt
+  // bewusst ZWEIWERTIG, sonst wuerde auf der Buchmacherseite ein Panel
+  // gebaut und der 20-s-Auto-Scan (ui.js:870) gegen PIN/BF starten.
+  // CMD_SITE (ui.js:1318) braucht dieselbe Absicherung.
+  const IS_BETATHOME = /bet-at-home\.de/.test(location.hostname);
 
   // ---------- API-Concurrency + Caches ----------
   const pinSem = makeSem(PIN_MAX_CONCURRENCY);
@@ -3525,6 +3536,377 @@
       onerror: requeue, ontimeout: requeue
     });
   }
+// ---------- Bet-at-home: Store-Leser (Hook-Quelle) ----------
+//
+// Zweck: Liest die Quoten, die die Buchmacher-SEITE selbst bereits in ihren
+// Redux-Store gelegt hat, und uebersetzt sie in das kanonische
+// Kandidaten-Format. KEIN eigener HTTP-Request — die Daten sind schon da
+// (live verifiziert 04.10.2026: 86 Offers / 15 Markttypen je Spiel).
+//
+// DESHALB kein Timer, kein setInterval, kein MutationObserver, kein Auto-Loop:
+// Der Abruf passiert ausschliesslich bei einem Klick auf den sichtbaren
+// Knopf (siehe BATATHOME_knopf()). Damit ist eine Accountsperre durch
+// wiederholte Scans konstruktiv ausgeschlossen — wir erzeugen keinen
+// Traffic, wir lesen nur den Store.
+//
+// Store-Form (sports2.bet-at-home.de):
+//   zustand['market-group-odds-event-page-<matchId>']
+//     .markets[<bId>_ep<partId>].desktopTitle  → "1X2, Reguläre Spielzeit"
+//                                   .groups[].title  → O/U-Linie "2.5"
+//     .odds[<bettingOfferId>] = {odds, text, shortText, outcome, suspended}
+//
+// Kanonisches Format (identisch zum Snapshot-Builder in snapshot.js):
+//   {kind, label, quote, name, league, leagueName, sport, startTime, live}
+
+const BATATHOME_STORES = 'market-group-odds-event-page-';
+const BATATHOME_PIPE = 'http://127.0.0.1:8765/odds';
+
+// ---------- Reine Übersetzung (Node-testbar, keine Browser-API) ----------
+
+// Kanalkey → App-Sportart. Bet-at-home nutzt numerische discipline-IDs;
+// die Zuordnung ist aus der Store-Discipline abgeleitet (live geprueft:
+// 1=Fussball, 3=Tennis, 5=Am.Football, 6=Ice Hockey, 8=Basketball, 45=Darts).
+function batathomeSport(disciplineId, disciplineName) {
+  const nachId = {
+    '1': 'soccer', '3': 'tennis', '5': 'american-football',
+    '6': 'ice-hockey', '8': 'basketball', '45': 'darts',
+  };
+  if (nachId[String(disciplineId)]) return nachId[String(disciplineId)];
+  // Rueckfall ueber den Namen, falls die ID einmal abweicht.
+  const n = String(disciplineName || '').toLowerCase();
+  if (n.includes('fuß') || n.includes('fuss') || n.includes('soccer') || n.includes('football')) return 'soccer';
+  if (n.includes('tennis')) return 'tennis';
+  if (n.includes('basket')) return 'basketball';
+  if (n.includes('hockey') || n.includes('eis')) return 'ice-hockey';
+  if (n.includes('dart')) return 'darts';
+  return '';
+}
+
+// 1.60 -> "1.6"; 3.80 -> "3.8". Dezimalpunkt statt Komma (kanonisch).
+function batathomeZahl(wert) {
+  if (typeof wert !== 'number') return null;
+  if (!isFinite(wert) || wert <= 1) return null;
+  return String(wert);
+}
+
+// "2.5" -> "25", "0.5" -> "05", "10.5" -> "105" (Kind-Suffix: ou25O).
+// Muss exakt der Python-Regel entsprechen:
+//   _linie_zu_kind_zahl() = f"{int(round(linie * 10)):02d}"
+// in freiwetten_test_scanner.py:257 — sonst finden die Kandidaten keine
+// Gegenquote in der DB (die Kinds muessen zeichengleich sein).
+function batathomeLinieSchluessel(linie) {
+  const s = String(linie === null || linie === undefined ? '' : linie)
+    .trim().replace(',', '.');
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  const wert = parseFloat(s);
+  if (!isFinite(wert)) return null;
+  const zehntel = Math.round(wert * 10);
+  if (zehntel <= 0) return null;
+  return String(zehntel).padStart(2, '0');
+}
+
+// Seiten-Zuordnung der 1X2-Selektionen: outcome 10 = Heim, 11 = Unentschieden,
+// 12 = Auswaerts (live verifiziert: 10/11/10 mit text Heimauswahl/Draw/Gegner).
+// Ueber den Text ist die Zuordnung eindeutiger, deshalb zuerst der Text.
+function batathomeMLSeite(offer, heim, aus) {
+  const txt = String(offer.shortText || offer.text || '').trim();
+  if (/^(1|home|heim)$/i.test(txt)) return 'A';
+  if (/^(2|away|aus)$/i.test(txt)) return 'B';
+  if (/^(x|draw|unentschieden)$/i.test(txt)) return 'D';
+  // Notausgang ueber die Teamnamen.
+  const voll = String(offer.text || '').trim().toLowerCase();
+  const h = String(heim || '').trim().toLowerCase();
+  const a = String(aus || '').trim().toLowerCase();
+  if (voll && h && voll === h) return 'A';
+  if (voll && a && voll === a) return 'B';
+  if (voll && /unentschieden|draw|^x$/.test(voll)) return 'D';
+  if (String(offer.outcome) === '11') return 'D';
+  return '';
+}
+
+// Kernfunktion: ein Store-Slice → Kandidatenliste.
+// slice = zustand['market-group-odds-event-page-<id>'], teamInfos = [{home, away}]
+function batathomeUebersetze(slice, teamInfos, sport) {
+  const raus = [];
+  if (!slice || typeof slice !== 'object') return raus;
+  const markets = slice.markets || {};
+  const odds = slice.odds || {};
+  const teams = Array.isArray(teamInfos) && teamInfos.length ? teamInfos[0] : (teamInfos || {});
+  const heim = teams.home || '';
+  const aus = teams.away || '';
+
+  for (const key of Object.keys(markets)) {
+    const markt = markets[key];
+    if (!markt || !markt.groups) continue;
+    const titel = String(markt.desktopTitle || markt.mobileTitle || '');
+    // Nur die "Regulaere Spielzeit"-Varianten — Halbzeit und_ECorner
+    // haben im Userscript keine Entsprechung (kein DB-Kind) und wuerden
+    // sonst gegen die falschen Gegenquoten gerechnet.
+    const regulaer = /reguläre spielzeit|regular time/i.test(titel);
+
+    for (const gruppe of markt.groups) {
+      const ids = (gruppe && gruppe.list) || [];
+
+      // ---- 1X2 (b69_ep3) ----
+      if (/\b1X2\b/i.test(titel) && regulaer) {
+        for (const id of ids) {
+          const o = odds[id];
+          if (!o || o.suspended || o.removed) continue;
+          const quote = batathomeZahl(o.odds);
+          if (!quote) continue;
+          const seite = batathomeMLSeite(o, heim, aus);
+          if (!seite) continue;
+          raus.push({
+            kind: 'h3' + seite,
+            label: '1X2 ' + (seite === 'A' ? (heim || 'Heim')
+              : seite === 'B' ? (aus || 'Auswaerts') : 'Unentschieden'),
+            quote, sport: sport || '', live: false,
+            heim: String(o.text || ''), startTime: '', league: '',
+            leagueName: '', name: '',
+          });
+        }
+        continue;
+      }
+
+      // ---- Ueber/Unter (b47_ep3) — Linie steht in groups[].title ----
+      // v9.9.39 (Befund, live am Spiel Griechenland-Deutschland): die
+      // Titel-Regel allein ist zu weit. Neben dem Gesamt-Tor-Markt b47 gibt
+      // es TEAM-Tor-Märkte "Deutschland trifft Ueber/Unter" /
+      // "Griechenland trifft Ueber/Unter" (b77_*) mit DENSELBEN Linien
+      // (0.5 … 4.5). Sie ueberschrieben die echten Quoten und schickten
+      // Over 3.5 = 18.00 statt der echten 2.40 (Live-Abgleich gegen den
+      // Store: die geschickten Werte decken sich ZIFFER fuer ZIFFER mit
+      // b77 ueber vier Linien).
+      //
+      // Nebenbefund als schnelles Fehler-Signal: 1/18.00 + 1/1.09 = 0,973.
+      // Das allein ist KEIN Beweis — eine Summe unter 1 ist die Bedingung
+      // fuer einen Back-Back-Surebet zwischen zwei Buechern und kommt dort
+      // staendig vor. Nur als Indiz taugt sie hier, weil beide Quoten vom
+      // SELBEN Buch und vom SELBEN Markt stammen muessten; auffaellig ist
+      // zusaetzlich, dass Over nicht zwischen Over 2.5 und Over 4.5 liegt.
+      // Der Nachweis ist der Store-Abgleich, nicht die Summe.
+      // Der Hook filtert deshalb ueber `marketKey` (das steht in JEDEM
+      // Offer) statt ueber die Position.
+      if (/über\/unter|over\/under/i.test(titel) && regulaer) {
+        // Team-Tor-Märkte heißen "… trifft Ueber/Unter" / "… scores Over/
+        // Under" — die haben ein anderes Kinds-Schema (Mannschaftstor-
+        // zaehlung) und duerfen NIE als Spiel-O/U durchgehen.
+        if (/trifft|scores?\b/i.test(titel)) continue;
+        const sl = batathomeLinieSchluessel(gruppe.title);
+        if (!sl) continue;
+        const marktKey = markt.id || markt.key || key;
+        // Innerhalb der Gruppe ist die Reihenfolge Over, Under (live
+        // verifiziert), aber die Outcome-ID ist die belastbare Quelle:
+        // 13 = Ueber, 14 = Unter (an allen 9 Linien geprueft). Der
+        // Index-Fallback bleibt fuer aeltere Stores ohne `outcome`.
+        ids.forEach((id, idx) => {
+          const o = odds[id];
+          if (!o || o.suspended || o.removed) return;
+          // v9.9.39: Angebote aus einem ANDEREN Markt (z. B. b47_ep5 =
+          // 1. Halbzeit, die bei 7.5/8.5 in der Gruppe kleben) gehoeren
+          // nicht zur regulaeren Spielzeit.
+          if (o.marketKey && o.marketKey !== marktKey) return;
+          const quote = batathomeZahl(o.odds);
+          if (!quote) return;
+          const seite = o.outcome === '13' ? 'O'
+            : o.outcome === '14' ? 'U'
+              : (idx % 2 === 0 ? 'O' : 'U');
+          raus.push({
+            kind: 'ou' + sl + seite,
+            label: 'Ueber/Unter ' + gruppe.title + ' (' + seite + ')',
+            quote, sport: sport || '', live: false,
+            heim: '', startTime: '', league: '', leagueName: '', name: '',
+          });
+        });
+        continue;
+      }
+
+      // ---- Beide Teams treffen (b41_ep3 o.ae.) ----
+      if (/beide teams treffen|both teams to score/i.test(titel) && regulaer) {
+        ids.forEach((id, idx) => {
+          const o = odds[id];
+          if (!o || o.suspended || o.removed) return;
+          const quote = batathomeZahl(o.odds);
+          if (!quote) return;
+          raus.push({
+            kind: idx % 2 === 0 ? 'bttsY' : 'bttsN',
+            label: 'Beide Teams treffen (' + (idx % 2 === 0 ? 'Ja' : 'Nein') + ')',
+            quote, sport: sport || '', live: false,
+            heim: '', startTime: '', league: '', leagueName: '', name: '',
+          });
+        });
+        continue;
+      }
+    }
+  }
+  return raus;
+}
+
+// Alle Event-Seiten des Stores → Kandidaten (die Spiellisten-Seite).
+function batathomeSammle(zustand) {
+  const raus = [];
+  if (!zustand || typeof zustand !== 'object') return raus;
+  for (const sliceName of Object.keys(zustand)) {
+    if (sliceName.indexOf(BATATHOME_STORES) !== 0) continue;
+    const slice = zustand[sliceName];
+    const daten = (slice && slice.data) || slice;
+    if (!daten) continue;
+    // s.event traegt die Spiel-Meta (live verifiziert): homeName, awayName,
+    // tournamentName, locationName, startTime (ms), disciplineId. Ohne die
+    // ist name='' und die Pipe-Zeile laesst sich keinem DB-Spiel zuordnen.
+    const ev = daten.event || (daten.matchDetails && daten.matchDetails.event) || null;
+    const sport = batathomeSport(ev && ev.disciplineId, ev && ev.disciplineName);
+    const info = ev
+      ? { home: ev.homeName || '', away: ev.awayName || '' }
+      : null;
+    // Ohne s.event die Teamnamen aus den 1X2-Offer-Texten ableiten (letzter
+    // Ausweg, damit wenigstens die Seite ueberhaupt Kandidaten liefert).
+    const odds = daten.odds || {};
+    const texte = [];
+    for (const id of Object.keys(odds)) {
+      const t = odds[id].text;
+      if (t && texte.indexOf(t) === -1) texte.push(t);
+    }
+    const teams = info || { home: texte[0] || '', away: texte[1] || '' };
+    const kandidaten = batathomeUebersetze(daten, [teams], sport);
+    // Meta auf jeden Kandidaten haengen — die Pipe braucht sie fuer
+    // `name` (Spielzuordnung) und `startTime`/`live`.
+    const spielname = (ev && (ev.eventName || ev.title))
+      || [teams.home, teams.away].filter(Boolean).join(' - ');
+    for (const k of kandidaten) {
+      k.name = spielname;
+      k.heim = teams.home;
+      k.aus = teams.away;
+      k.league = (ev && ev.tournamentName) || '';
+      k.leagueName = (ev && ev.locationName) || '';
+      k.startTime = (ev && ev.startTime)
+        ? new Date(ev.startTime).toISOString() : '';
+      k.live = !!(ev && ev.isLive);
+    }
+    raus.push(...kandidaten);
+  }
+  return raus;
+}
+
+// ---------- Browser-Anbindung ----------
+//
+// Wird NUR auf sports2.bet-at-home.de ausgefuehrt (Host-Weiche in config.js).
+// Baut bewusst KEIN Panel und startet KEINEN Auto-Loop — anders als der
+// Betfair-Pfad (ui.js:1254). Der Abruf laeuft ausschliesslich bei einem Klick
+// auf den sichtbaren Knopf: sichtbar oder gar nicht.
+//
+// KEIN setInterval / setTimeout / MutationObserver in dieser Datei. Das ist
+// Absicht und getestet (test/hook_betathome.test.js) — ein Hintergrund-Poll
+// wuerde sonst den Store pollen, den die Seite erst noch fuellt.
+function batathomeLeseStore() {
+  // unsafeWindow: die Buchmacher-Seile setzt window.store; Tampermonkey
+  // kapselt window, deshalb der Sprung ueber unsafeWindow.
+  try {
+    const w = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    return (w && w.store && typeof w.store.getState === 'function')
+      ? w.store.getState() : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Sendet die Kandidaten an die Pipe. `lay` bleibt 0 — bet-at-home liefert
+// nur Back. Die Gegenquote (BF Lay / PIN Back) kommt beim Scan aus der DB;
+// die Pipe rechnet die Kante daher nicht selbst (siehe store_snapshot).
+function batathomeSende(pipeUrl, kandidaten, fetchFn) {
+  if (!kandidaten.length) return Promise.resolve(0);
+  const body = JSON.stringify({
+    ts: new Date().toISOString(),
+    source: 'bet-at-home',
+    partial: true,
+    candidates: kandidaten.map(function (k) {
+      return {
+        kind: k.kind, back: parseFloat(k.quote), lay: 0, xback: 0,
+        label: k.label, name: k.name || '', league: k.league || '',
+        leagueName: k.leagueName || '', sport: k.sport || '',
+        startTime: k.startTime || '', live: k.live ? 1 : 0,
+        src: 'bet-at-home',
+      };
+    }),
+  });
+  return fetchFn(pipeUrl, { method: 'POST', body: body })
+    .then(function (r) { return r.ok ? kandidaten.length : 0; })
+    .catch(function () { return 0; });
+}
+
+// Baut den Knopf an. Ein Klick = ein Abruf, danach ist Schluss (kein Loop).
+function batathome_knopf() {
+  if (typeof document === 'undefined' || !document.body) return;
+  if (document.getElementById('vbsb-batathome')) return;
+
+  const box = document.createElement('div');
+  box.id = 'vbsb-batathome';
+  box.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483000;'
+    + 'background:#12161c;color:#e8eef6;border:1px solid #2b3542;border-radius:8px;'
+    + 'padding:10px 12px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.4);';
+  const status = document.createElement('div');
+  status.style.cssText = 'margin-top:6px;opacity:.85;min-height:18px;';
+  status.textContent = 'Bereit — ein Klick = ein Abruf.';
+  // v9.9.39: Der Erfolg war beim Nutzer nicht wahrnehmbar (Befund 04.10.2026:
+  // "es kam keine Meldung, dass gesendet wurde", obwohl 21 Zeilen in der DB
+  // lagen). Deshalb wird der Erfolg nicht nur als Text, sondern als
+  // gruener, fetter Zustand mit Spielname und Gegenmarkt-Aequivalent
+  // gemeldet — und die Box springt sichtbar in den Vordergrund.
+  function batathomeStatus(text, farbe, fett) {
+    status.textContent = text;
+    status.style.color = farbe;
+    status.style.fontWeight = fett ? '700' : '400';
+    box.style.borderColor = farbe;
+    box.style.background = farbe === '#7ee787'
+      ? '#0d2b16' : (farbe === '#ff9f9f' ? '#2b0f0f' : '#12161c');
+  }
+  const btn = document.createElement('button');
+  btn.textContent = 'Quoten an VBSB senden';
+  btn.style.cssText = 'cursor:pointer;padding:6px 10px;border-radius:6px;'
+    + 'border:1px solid #3a4655;background:#1d2530;color:#e8eef6;';
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    batathomeStatus('Store wird gelesen …', '#e8eef6', false);
+    const zustand = batathomeLeseStore();
+    if (!zustand) {
+      batathomeStatus('Kein Store — Seite vollstaendig laden?', '#ff9f9f', true);
+      btn.disabled = false;
+      return;
+    }
+    const kandidaten = batathomeSammle(zustand);
+    if (!kandidaten.length) {
+      batathomeStatus('Keine verwertbaren Quoten im Store.', '#ff9f9f', true);
+      btn.disabled = false;
+      return;
+    }
+    const fetchFn = (typeof GM_xmlhttpRequest === 'function')
+      ? function (url, opts) {
+          return new Promise(function (resolve, reject) {
+            GM_xmlhttpRequest({
+              method: opts.method || 'GET', url: url, data: opts.body,
+              headers: { 'Content-Type': 'application/json' },
+              onload: function (r) { resolve({ ok: r.status >= 200 && r.status < 300 }); },
+              onerror: reject,
+            });
+          });
+        }
+      : function (url, opts) { return fetch(url, opts); };
+    batathomeSende(BATATHOME_PIPE, kandidaten, fetchFn).then(function (n) {
+      btn.disabled = false;
+      if (n) {
+        btn.textContent = 'Erneut senden';
+        batathomeStatus('✅ ' + n + ' Kandidaten gesendet — jetzt im Buchmacher-Dialog '
+          + '„Direkt" → Bet-at-home → Soccer scannen.', '#7ee787', true);
+      } else {
+        batathomeStatus('❌ Pipe nicht erreichbar — VBSB-App laeuft? (127.0.0.1:8765)',
+          '#ff9f9f', true);
+      }
+    });
+  });
+  box.appendChild(btn);
+  box.appendChild(status);
+  document.body.appendChild(box);
+}
   const LEAGUES = { 1728:'COMP:129', 2476:'COMP:12202373', 2333:'COMP:11068551',
     2331:'COMP:12209546', 1913:'COMP:23', 2024:'COMP:45', 2374:'COMP:97',
     6633:'COMP:403085', 1792:'COMP:10479956', 2517:'COMP:133', 2395:'COMP:4905',
@@ -10421,17 +10803,30 @@ if (!hit) continue;
           }
         }
         // Back-Back-Cross (ptsBB): PIN No (trifft nicht) + BF Yes-Back (trifft)
+        // v9.9.56 (PIN-No-Carrier, analog pts v8.70.1): die PIN-No-Quote
+        // („trifft NICHT") ist die Gegenwette der Buchmacher-Kategorie
+        // „Torschuetze" (Back-Back zu Pinnacle). Bis hierhin entstand eine
+        // ptsBB-Zeile NUR bei positivem Cross-Edge MIT BF-Back — deshalb
+        // hatte die DB 0 ptsBB-Zeilen, obwohl PIN die No-Seite fuehrt (live
+        // 06.10.2026: 57 pts-Zeilen, 0 ptsBB). Ab jetzt wird die Zeile immer
+        // gespeichert, wenn PIN ein No fuehrt; `lay` traegt den BF-Yes-Back
+        // nur, wenn es ihn gibt (0 = "gibt es nicht" — dieselbe Konvention
+        // wie `back: 0` beim pts-Carrier). Die Arb-Logzeile bleibt am Edge.
         const cand = pinSpecs.find(p => teamMatch(p.player, player));
-        if (cand && isEchteQuote(cand.no) && isEchteQuote(bf.back)) {
-          const eBb = computeBBEdge(cand.no, bf.back);
-          if (eBb > 0) {
-            log('  PTS-BB ' + player + ' ' + b.name + ': PIN No ' + cand.no.toFixed(2) +
-              ' + BF Back ' + bf.back.toFixed(2) + ' => Edge ' + (eBb * 100).toFixed(2) + '%');
-            pushRow(rows, lid, { name: b.name, hit: h, b,
-              kind: 'ptsBB', back: cand.no,
-              src: 'PIN ' + player + ' No-Back + BF Yes-Back (Spec ' + cand.sid + ')',
-              lay: bf.back, vol: bf.volB });
+        if (cand && isEchteQuote(cand.no)) {
+          const bbOk = isEchteQuote(bf.back);
+          if (bbOk) {
+            const eBb = computeBBEdge(cand.no, bf.back);
+            if (eBb > 0) {
+              log('  PTS-BB ' + player + ' ' + b.name + ': PIN No ' + cand.no.toFixed(2) +
+                ' + BF Back ' + bf.back.toFixed(2) + ' => Edge ' + (eBb * 100).toFixed(2) + '%');
+            }
           }
+          pushRow(rows, lid, { name: b.name, hit: h, b,
+            kind: 'ptsBB', back: cand.no,
+            src: 'PIN ' + player + ' No-Back' + (bbOk ? ' + BF Yes-Back' : '') +
+              ' (Spec ' + cand.sid + ')',
+            lay: bbOk ? bf.back : 0, vol: bbOk ? bf.volB : 0 });
         }
       }
     }
@@ -14741,6 +15136,14 @@ for (const cp of crossPairs2) {
     else ensurePanel();
   }
 
+  // v9.9.39: bet-at-home — NUR der sichtbare Knopf, kein Panel, kein Auto-Loop
+  // (der 20-s-Loop aus buildPanel() wird hier bewusst nicht gestartet).
+  if (IS_BETATHOME) {
+    const ensureHook = () => { if (!document.getElementById('vbsb-batathome')) batathome_knopf(); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ensureHook);
+    else ensureHook();
+  }
+
   // ---------- Pruefungs-Modul: Pipe-Befehle aus der VBSB-GUI ausfuehren ----------
   // Die GUI schreibt per POST /cmd einen Pruefauftrag (Tool + Parameter) in die
   // Pipe-Warteschlange. Dieses Script pollt GET /cmd, fuehrt den passenden
@@ -14799,7 +15202,11 @@ for (const cp of crossPairs2) {
   // Auftraege MIT Ziel-Site (why/discovery-deny/alias-set -> bf) darf nur der
   // passende Tab uebernehmen — why braucht bfLays gegen betfair.com, ein
   // PIN-Tab-Poller wuerde sonst mit leerem BF-Teil antworten (bfLays-Cache).
-  const CMD_SITE = IS_BETFAIR ? 'bf' : 'pin';
+  // v9.9.39: IS_BETFAIR bleibt bewusst zweiwertig — auf bet-at-home waere
+// CMD_SITE sonst 'pin' und der Tab meldete sich als Pinnacle-Tab. Die
+// Buchmacher-Domain ist Quell-Seite, kein Ziel: CMD_SITE ist '' und der
+// Poller (cmdPoll) startet dort gar nicht (Aufrufe unten sind Wächter).
+const CMD_SITE = IS_BETATHOME ? '' : (IS_BETFAIR ? 'bf' : 'pin');
   function cmdPoll() {
     if (typeof GM_xmlhttpRequest === 'undefined' || cmdBusy) {
       console.log('[Pruefung] Poll uebersprungen: ' +
@@ -14811,29 +15218,34 @@ for (const cp of crossPairs2) {
       onload: r => {
         console.log('[Pruefung] GET /cmd -> status ' + r.status);
         // 204 = kein Auftrag in der Haltezeit -> sofort weiterpollt
-        if (!(r.status >= 200 && r.status < 300) || r.status === 204) { cmdPoll(); return; }
+        if (!(r.status >= 200 && r.status < 300) || r.status === 204) { if (!IS_BETATHOME) cmdPoll(); return; }
         let cmd = null;
         try { cmd = JSON.parse(r.responseText); } catch (e) { cmdPoll(); return; }
         if (!cmd || !cmd.id || !cmd.tool) { cmdPoll(); return; }
         console.log('[Pruefung] Auftrag erhalten: id=' + cmd.id + ' tool=' + cmd.tool);
         cmdBusy = true;
         runCmd(cmd).then(() => { cmdBusy = false; cmdPoll(); })
-          .catch(() => { cmdBusy = false; cmdPoll(); });
+          .catch(() => { cmdBusy = false; if (!IS_BETATHOME) cmdPoll(); });
       },
       onerror: e => {
         console.log('[Pruefung] GET /cmd Fehler: ' + e);
         // Pipe kurz nicht erreichbar (Start/Neustart) -> mit Pause erneut
-        setTimeout(() => cmdPoll(), 2000);
-      },
-      ontimeout: () => cmdPoll()  // Haltezeit ueberschritten -> sofort weiter
+        if (!IS_BETATHOME) setTimeout(() => cmdPoll(), 2000);
+    },
+    ontimeout: () => { if (!IS_BETATHOME) cmdPoll(); }  // Haltezeit ueberschritten -> sofort weiter
     });
   }
-  cmdPoll();
-  // Zusaetzlicher Weckruf bei Tab-Rueckkehr (deckt auch den Fehler-Pfad ab,
-  // dessen 2s-Pause in versteckten Tabs gedehnt werden kann).
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') cmdPoll();
-  });
+  // v9.9.39: Auf der Buchmacher-Domain kein /cmd-Long-Poll — der Tab ist
+  // kein Ziel-Tab und soll keinen Auftrag beanspruchen. Nur der Klick auf
+  // den Hook-Knopf (hook_betathome.js) loest hier etwas aus.
+  if (!IS_BETATHOME) {
+    cmdPoll();
+    // Zusaetzlicher Weckruf bei Tab-Rueckkehr (deckt auch den Fehler-Pfad ab,
+    // dessen 2s-Pause in versteckten Tabs gedehnt werden kann).
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') cmdPoll();
+    });
+  }
 
   // ---------- URL-Trigger: ?ahprobe=COMP:129 fuehrt Probe im Script-Kontext aus ----------
   const apm = location.search.match(/[?&]ahprobe=([^&]+)/);

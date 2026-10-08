@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.11.25
+// @version      9.11.26
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -425,6 +425,7 @@
     "al jandal": "al jndal",
     "al khaldiya": "al khalidiyah",
     "al nasr dubai": "al nasr uae",
+    "al nasr taadeen": "nasr taaden",
     "al qadisiyah": "al quadisiya ksa",
     "al salmiya": "al salmiyah",
     "al sulaibikhat": "al salibikhaet",
@@ -458,11 +459,14 @@
     "barcelona sc": "barcelona ecu",
     "beijing institute of technology": "beijing tech fc",
     "benfica ii": "benfica b",
+    "berck fliers range": "berck rang du fliers",
     "birmingham city": "birmingham w",
     "blackburn rovers": "blackburn u21",
     bodrumspor: "bodrum fk",
     "bokelj kotor": "fk bokelj",
+    "bosnia and herzegovina": "bosnia w",
     "boston united": "boston utd",
+    "bu yunchaokete": "yu bu",
     "bukovyna chernivtsi": "fc bukovyna",
     "busan transportation corporation": "busan transportation corp",
     "bw linz": "fc blau weiss linz",
@@ -538,7 +542,7 @@
     "incheon united": "incheon utd",
     "independiente del valle": "independiente ecu",
     "independiente medellin": "ind medellin",
-    "independiente petrolero": "club independiente petrol",
+    "independiente petrolero": "inde",
     "inegol kafkasspor": "inegol kafkas genclikspor",
     "internacional de palmira": "inter palmir",
     internazionale: "inter",
@@ -575,6 +579,7 @@
     luleaa: "ifk lulea",
     "lustenau 1907": "fc lustenau",
     "lyn ii": "lyn 2",
+    lyon: "lyonso basket",
     "m'gladbach": "borussia monchengladbach",
     "maardu linnameeskond": "fc maardu",
     "machida zelvia": "fc machida",
@@ -615,6 +620,7 @@
     "paris saint germain": "paris st g",
     "parnu vaprus ii": "parnu jk vaprus u21",
     pats: "patriots",
+    "pk patrioti levice": "bk patrioti levice",
     "plaza amador ii": "plaza amador res",
     "podbeskidzie bielsko biala": "podbeskidzie b b",
     "polonia warsaw": "polonia warszawa",
@@ -705,6 +711,7 @@
     "yokohama fm": "yokohama f marinos",
     ypsonas: "digenis ypsona",
     "yscc yokohama": "yokohama scc",
+    zalaegerszegi: "zalaegerszeg",
     "zhetysu taldykorgan": "fc zhetysu"
   };
   // __SYNONYMS_SIDEALIAS_END__

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.9.64
+// @version      9.11.7
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan).
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -65,6 +65,106 @@
   // Nur wenn der BF-Lay unter dem PIN-Back liegt, kann ein Back-Lay-Arb
   // entstehen (sonst gibt es nie eine Marge).
   function arbDir(back, lay) { return isEchteQuote(back) && lay > 0 && lay < back; }
+
+  // Quote-Carrier-Regel (v9.11.5): Ist das Paar (PIN-Back, BF-Lay) als
+  // ZEILE plausibel — unabhaengig davon, ob es GERADE in Arb-Richtung liegt?
+  //
+  // Hintergrund: Die 1X2-ML-Zeilen (h3A/h3D/h3B) werden seit v8.62.12 auch
+  // OHNE Arb-Richtung gespeichert („Boost-Quote-Carrier"), damit der
+  // Boost-Solver und das Buchmacher-Modul Quoten haben. Die
+  // Doppelchance-Zeilen (dc1x/dcX2/dc12) hatten dieses Gate nicht: sie
+  // entstanden NUR, wenn `tryBL` die Paarung als Arb akzeptierte. Folge
+  // (Nutzer-Befund 08.10.2026, gemessen): eine Buchmacher-Wette auf
+  // „Unentschieden" konnte nicht mit der PIN-Doppelchance „Home and Away"
+  // (dc12) abgesichert werden — in der ganzen pvb_odds.db standen 0
+  // dc-Zeilen, weil eine normale Doppelchance (PIN 1,20 / BF-Lay 1,22) nie
+  // in Arb-Richtung liegt. Diese Regel ist die EINE Begruendung, wann eine
+  // Zeile als Quote gespeichert wird; das Arb-Urteil selbst bleibt in
+  // `tryBL` (Richtung + Preismatch) und wird davon nicht beruehrt.
+  function blZeilePlausibel(back, lay, maxMarge) {
+    if (!isEchteQuote(back) || !isEchteQuote(lay)) return false;
+    // Physikalisch plausible Boersenmarge — derselbe Guard wie bei den
+    // 1X2-ML-Zeilen („Rakow 1.72/11.50" = Lay vom falschen Runner).
+    return lay / back <= (maxMarge || 2.5);
+  }
+
+  // BF-Doppelchance-Back des Komplement-Ausgangs einer Vollzeit-1X2-Seite
+  // (v9.11.6) — die EINE Regel des `xback`-Feldes fuer 3-Weg-Maerkte.
+  //
+  // `xback` heisst seit v8.62.23 „BF-Back des Komplement-Ausgangs" und wird
+  // bei allen 2-Wege-Zeilen gefuellt (w2n/btts/ou/hfou/oe/bl). Bei den
+  // 1X2-Zeilen blieb es bewusst 0 — Begruendung damals: „bei drei Ausgaengen
+  // ist der Back EINES Runners kein Komplement". Das stimmt fuer einen
+  // einzelnen Runner, aber nicht fuer den Markt: Betfair fuehrt die
+  // Doppelchance als EIGENEN Markt, und jeder 1X2-Ausgang wird von genau
+  // EINEM Doppelchance-Ausgang komplementiert —
+  //
+  //   Heim    `h3A`  ->  „X oder 2"  = BF DC **X2**
+  //   Remis   `h3D`  ->  „1 oder 2"  = BF DC **12**  („Home and Away")
+  //   Auswaerts `h3B` -> „1 oder X"  = BF DC **1X**
+  //
+  // also exakt dieselbe Zuordnung wie im Python-Helfer
+  // `freiwetten_test_scanner._gegenseite_kind` (h3D↔dc12, h3A↔dcX2,
+  // h3B↔dc1x) — zwei Sprachen, eine Tabelle.
+  //
+  // Nutzer-Befund 08.10.2026 („die DC kommen noch nicht durch"): „Dortmund
+  // hat bei Betfair als Home Away DC eine 1,2 und kommt auf das gleiche
+  // Ergebnis mit 7,8 auf 10 Euro Einsatz wie das Lay auf Unentschieden".
+  // Genau so war es — die BF-Doppelchance fehlte als Gegenwette, weil das
+  // `xback` der h3-Zeile leer war. Gemessen mit den echten Zeilen
+  // (PIN Remis 5.79 / BF Lay 6.00 / BF DC 12 1.20): Back-Lay 7,78 € und
+  // Back-Back BF 7,80 € — die beiden Wege sind gleichwertig, nicht identisch.
+  // Vorher kannte das Buchmacher-Modul fuer `h3D` nur `bf_lay` und (seit
+  // v9.11.5) `pin_back`, nie `bf_back`.
+  //
+  // Gelesen werden BEIDE Formen des BF-DC-Feldes: `{back, vol}` (api_bf.js)
+  // und eine nackte Zahl — dieselbe Toleranz wie bei den uebrigen
+  // xback-Zeilen, damit ein zweiter Aufrufer die Form nicht raten muss.
+  const DC_KOMPLEMENT_JE_SEITE = {
+    home: 'x2', draw: '12', away: '1x',
+    A: 'x2', D: '12', B: '1x',
+  };
+  function dcBackFuerAusgang(dcBack, seite) {
+    if (!dcBack) return 0;
+    const key = DC_KOMPLEMENT_JE_SEITE[seite];
+    if (!key) return 0;
+    const d = dcBack[key];
+    if (!d) return 0;
+    const q = typeof d === 'number' ? d : d.back;
+    return isEchteQuote(q) ? q : 0;
+  }
+
+  // BF-Doppelchance-Backs JE BF-EVENT einsammeln (v9.11.7).
+  //
+  // Warum es diesen Helfer braucht (Nutzer-Befund 08.10.2026, „kommen immer
+  // noch nicht durch"): Die BF-DC-Preise haengen NICHT an der 3-Wege-Zeile,
+  // mit der der Scanner rechnet. `api_bf.js` verarbeitet je Marktknoten und
+  // legt den Back-Preis der Doppelchance an die EIGENE Zeile
+  // (`{kind:'dc', dc: dcLays, dcBack: dcBacks}`). Die Moneyline-Zeile
+  // (`{kind:'mo3', …}`) kennt den DC-Markt nicht — ihr Objekt hat kein
+  // `dcBack`. Der v9.11.6-Fix las `b.dcBack` genau in der mo3-Schleife
+  // (`processMatchOdds`), das Feld war dort ausnahmslos `undefined`, und die
+  // h3-Zeilen landeten weiter mit `xback=0` in der DB (live gemessen: 0 von
+  // 2705 h3A/h3D/h3B-Zeilen mit `xback > 1.01`, Stand 08.10.2026 09:02).
+  //
+  // Die beiden Zeilen desselben BF-Events tragen denselben Namen (`evn`) —
+  // ueber ihn wird der DC-Back zur mo3-Zeile gebracht. Der Schluessel ist
+  // bewusst der BF-Eventname und NICHT die PIN-Matchup-ID: bei der
+  // Doppel-lid-Verarbeitung koennen zwei BF-Events auf dieselbe PIN-ID
+  // zeigen, der Eventname bleibt dagegen eindeutig.
+  //
+  // Reihenfolge bleibt Sache des Aufrufers: er sammelt die dc-Zeilen und
+  // reicht die Map in die 1X2-Verarbeitung durch.
+  function dcBacksNachEvent(zeilen) {
+    const map = new Map();
+    for (const b of (Array.isArray(zeilen) ? zeilen : [])) {
+      if (!b || !b.name || !b.dcBack) continue;
+      const keys = Object.keys(b.dcBack);
+      if (!keys.length) continue;
+      map.set(b.name, b.dcBack);
+    }
+    return map;
+  }
 
   // FULL-TIME-Moneyline aus den PIN-Moneyline-Kandidaten waehlen (v8.84.1).
   // Regel: die Ganzspiel-ML hat period 0 — eine FEHLENDE period zaehlt als 0
@@ -11104,31 +11204,53 @@ if (isEchteQuote(pinHome) && b.dnb.home) {
         const dbg2 = b.dc['12'] ? ' 12 ' + pin12.toFixed(2) + '/' + b.dc['12'].lay.toFixed(2) : '';
         log('  DEBUG DC ' + b.name + ': PIN/BF-Lay ' + dbg1 + dbgX + dbg2);
       }
-      if (pin1x > 1.01 && b.dc['1x']) {
+      if (b.dc['1x'] && blZeilePlausibel(pin1x, b.dc['1x'].lay)) {
         const m = tryBL('DC-1X', 'DC 1X ' + b.name, pin1x, b.dc['1x'].lay, b.name, log);
         if (m.ok) {
           log('  DC 1X ' + b.name + ': PIN ' + pin1x.toFixed(2) +
             ' / BF ' + b.dc['1x'].lay.toFixed(2) + ' Score ' + m.score.toFixed(3));
+        }
+        // Quote-Carrier (v9.11.5): Die DC-Zeile wird AUCH ohne Arb-Richtung
+        // gespeichert — wie die 1X2-ML-Zeilen seit v8.62.12. Bis hierher
+        // entstand sie nur bei `m.ok` (BF-Lay UNTER PIN-Back); eine normale
+        // Doppelchance liegt aber genau andersherum, deshalb gab es in der
+        // ganzen pvb_odds.db 0 dc-Zeilen und der Buchmacher-Scan konnte eine
+        // Draw-Wette nicht mit PIN „Home and Away" absichern (Nutzer-Befund
+        // 08.10.2026). Das ARB-Urteil bleibt unveraendert in `tryBL`.
+        // NICHT schreiben, wenn tryBL die Paarung wegen Identitaets-Verdacht
+        // verwirft (`m.dir && !m.ok` = Richtung stimmt, Preismatch nicht) —
+        // sonst stuende genau die Zeile als Arb in der App, die der Scanner
+        // selbst als falsch erkannt hat.
+        if (!(m.dir && !m.ok)) {
           pushRow(rows, lid, { name: b.name, hit: h, b,
             kind: 'dc1x', back: pin1x, src: 'PIN DC 1X / BF DC Lay',
             lay: b.dc['1x'].lay, vol: b.dc['1x'].vol });
         }
       }
-      if (pinX2 > 1.01 && b.dc['x2']) {
+      if (b.dc['x2'] && blZeilePlausibel(pinX2, b.dc['x2'].lay)) {
         const m = tryBL('DC-X2', 'DC X2 ' + b.name, pinX2, b.dc['x2'].lay, b.name, log);
         if (m.ok) {
           log('  DC X2 ' + b.name + ': PIN ' + pinX2.toFixed(2) +
             ' / BF ' + b.dc['x2'].lay.toFixed(2) + ' Score ' + m.score.toFixed(3));
+        }
+        // Quote-Carrier wie oben (dc1x) — Gegenwette einer Buchmacher-Wette
+        // auf den Auswaertssieg (h3B).
+        if (!(m.dir && !m.ok)) {
           pushRow(rows, lid, { name: b.name, hit: h, b,
             kind: 'dcX2', back: pinX2, src: 'PIN DC X2 / BF DC Lay',
             lay: b.dc['x2'].lay, vol: b.dc['x2'].vol });
         }
       }
-      if (pin12 > 1.01 && b.dc['12']) {
+      if (b.dc['12'] && blZeilePlausibel(pin12, b.dc['12'].lay)) {
         const m = tryBL('DC-12', 'DC 12 ' + b.name, pin12, b.dc['12'].lay, b.name, log);
         if (m.ok) {
           log('  DC 12 ' + b.name + ': PIN ' + pin12.toFixed(2) +
             ' / BF ' + b.dc['12'].lay.toFixed(2) + ' Score ' + m.score.toFixed(3));
+        }
+        // Quote-Carrier wie oben (dc1x) — **der** Fall aus dem Nutzer-Befund:
+        // PIN Doppelchance „Home and Away" (12) ist die Gegenwette einer
+        // Buchmacher-Wette auf Unentschieden (h3D).
+        if (!(m.dir && !m.ok)) {
           pushRow(rows, lid, { name: b.name, hit: h, b,
             kind: 'dc12', back: pin12, src: 'PIN DC 12 / BF DC Lay',
             lay: b.dc['12'].lay, vol: b.dc['12'].vol });
@@ -11631,7 +11753,7 @@ for (const cp of crossPairs2) {
           xback: isEchteQuote(g.b.backO) ? g.b.backO : 0 });
     }
     // ---------- Match Odds (Full Time + Half Time) — gemeinsame Helfer-Funktion ----------
-    async function processMatchOdds(pairs, period, kindPrefix, srcLabel, logFn) {
+    async function processMatchOdds(pairs, period, kindPrefix, srcLabel, logFn, dcBackMap) {
       const htDbg = {};
       for (const { h, b } of pairs) {
         const pr = mlCache[h.id];
@@ -11686,28 +11808,47 @@ for (const cp of crossPairs2) {
           // beim Scan kein Arb besteht (analog Tennis v8.62.11 / CS
           // v8.60.34). Daten-Existenz-Gate: PIN-Back + BF-Lay vorhanden
           // (lay >= 1000 = BF-Platzhalter). App-Liste zeigt nur edge > 0.
+          // v8.78.7/v9.11.5: dieselbe Plausibilitaets-Regel wie fuer die
+          // Quote-Carrier-Zeilen (`blZeilePlausibel`, matching.js) — eine
+          // Regel, ein Ort. Ein BF-Lay auf denselben Ausgang liegt immer
+          // UEBER dem Back, aber nie mit absurder Marge — z.B. Rakow
+          // back=1.72/lay=11.5 (6.7x) ist ein Lay vom falschen Runner/Markt
+          // (Doppel-lid-Verarbeitung), der sonst als kaputter Treffer im
+          // Buchmacher-Modul landete (Bwin-Quote stimmt, Lay passt nicht).
+          // Echte ML-Margen liegen bei ~1.1-1.4 (p90 1.34); > 2.5x =
+          // verwerfen (die Regel deckt auch die Platzhalter 100/110 mit ab).
+          // Daten-Existenz-Gate bleibt STILL (ohne Log) — dieselbe Bedingung
+          // prueft `blZeilePlausibel` noch einmal.
           if (!(back > 1.01) || !(lay > 1.01) || lay >= 1000) continue;
-          // v8.78.7: ML-Lay physikalisch zum Back pruefen (liquide Maerkte).
-          // Ein BF-Lay auf denselben Ausgang liegt immer UEBER dem Back,
-          // aber nie mit absurder Marge — z.B. Rakow back=1.72/lay=11.5
-          // (6.7x) ist ein Lay vom falschen Runner/Markt (Doppel-lid-
-          // Verarbeitung), der sonst als kaputter Treffer im Buchmacher-
-          // Modul landete (Bwin-Quote stimmt, Lay passt nicht). Echte
-          // ML-Margen liegen bei ~1.1-1.4 (p90 1.34); > 2.5x = verwerfen.
           const mlMarge = lay / back;
-          if (mlMarge > 2.5) {
+          if (!blZeilePlausibel(back, lay)) {
             log('  DEBUG ML-Lay verworfen[' + lid + '] ' + kind + ' ' + b.name +
               ' back=' + back + ' lay=' + lay + ' (Marge ' +
               mlMarge.toFixed(1) + 'x)');
             continue;
           }
+          // xback = BF-Back des Komplement-Ausgangs (v8.62.23). Bei den
+          // Vollzeit-1X2-Seiten ist das der Betfair-Doppelchance-Back der
+          // beiden anderen Ausgänge (`dcBackFuerAusgang`, matching.js):
+          // Heim → „X oder 2", Remis → „1 oder 2" („Home and Away"),
+          // Auswärts → „1 oder X". Halbzeit-1X2 bleibt bei 0: der BF-DC-Markt
+          // ist ein Vollzeit-Spezial, ein HT-Paar wäre eine andere Wette
+          // (v9.11.6, Nutzer-Befund 08.10.2026).
           pushRow(rows, lid, { name: b.name, hit: h, b,
             kind, back, src: 'PIN Moneyline ' + srcLabel + ' ' + d + ' / BF ' + (period === 0 ? 'Match Odds' : 'First Half'),
-            lay, vol });
+            lay, vol,
+            xback: period === 0
+              ? dcBackFuerAusgang(dcBackMap && dcBackMap.get(b.name), d) : 0 });
         }
       }
     }
-    await processMatchOdds(mo3s, 0, 'h3', '', log);
+    // Der BF-Doppelchance-Back haengt an der EIGENEN dc-Zeile (api_bf.js),
+    // nicht an der mo3-Zeile, mit der `processMatchOdds` rechnet — deshalb
+    // hier die Map BF-Eventname -> dcBack bauen und durchreichen. Nur so
+    // traegt eine h3-Zeile den BF-DC-Back als `xback` (v9.11.7, ganzer
+    // Hintergrund in `dcBacksNachEvent`, matching.js).
+    const dcBackMap = dcBacksNachEvent(dcs.map(p => p.b));
+    await processMatchOdds(mo3s, 0, 'h3', '', log, dcBackMap);
     await processMatchOdds(mo3hs, 1, 'h3h', 'HT', log);
     const hfSide = (s, teams) => {
       if (s === 'Draw') return 'D';

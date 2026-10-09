@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.11.26
-// @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan).
+// @version      9.13.3
+// @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan). Auf bet365 (v9.12.0) ein Klick-Knopf fuer einen Mess-Bericht — er schreibt KEINE Quoten.
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
 // @match        https://sports2.bet-at-home.de/*
+// @match        https://www.bet365.de/*
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        GM_info
@@ -1254,6 +1255,14 @@
   // gebaut und der 20-s-Auto-Scan (ui.js:870) gegen PIN/BF starten.
   // CMD_SITE (ui.js:1318) braucht dieselbe Absicherung.
   const IS_BETATHOME = /bet-at-home\.de/.test(location.hostname);
+  // v9.12.0: vierte Domain — bet365. Ebenfalls eine QUELLE, aber (noch) nur
+  // MESSEND: der Hook (hook_bet365.js) schickt keinen einzigen eigenen
+  // Request zur Seite, sondern sammelt auf Klick einen Bericht ueber DOM,
+  // Datenwege und `window.bet365`. Kein Panel, kein Auto-Scan, kein
+  // /cmd-Poll — dieselben Waechter wie bei bet-at-home.
+  const IS_BET365 = /(^|\.)bet365\.de$/.test(location.hostname);
+  // Beide Buchmacher-Seiten sind QUELLEN: kein Ziel-Tab, kein Auto-Scan.
+  const IS_QUELLE = IS_BETATHOME || IS_BET365;
 
   // ---------- API-Concurrency + Caches ----------
   const pinSem = makeSem(PIN_MAX_CONCURRENCY);
@@ -4015,6 +4024,1082 @@ function batathome_knopf() {
   box.appendChild(status);
   document.body.appendChild(box);
 }
+// ---------- bet365: Zeilen-Leser (v9.12.0 gemessen, v9.13.3 Leser) ----------
+//
+// VERDRAHTUNG: Registry-Schluessel `bet365` (`buchmacher_registry`),
+// Direkt-Provider `direkt_quellen._lade_bet365` → `bet365_direkt` (liest die
+// Zeilen `src='bet365'`), und `pvb_odds_pipe.HOOK_SRC_PREFIXE` nennt ihn als
+// zweite Hook-Quelle.
+//
+// WAS DIESER HOOK JETZT TUT (v9.13.3): EIN Klick liest das Markt-Raster der
+// offenen Seite, uebersetzt es in die kanonischen Kandidaten und schickt sie
+// an `POST /odds` (`src='bet365'`, `partial` — dieselbe Form wie der
+// bet-at-home-Hook). ZUSÄTZLICH geht ein Bericht an `POST /log` (Diagnose:
+// was gelesen wurde, wie viele Zeilen ausfielen und warum).
+//
+// Der Leser ist bewusst NICHT der bet-at-home-Weg: dort lag alles in einem
+// Redux-Store, hier muss es aus dem DOM kommen. Die Regeln stehen als reine
+// Funktionen (node-testbar) im Abschnitt „Zeilen-LESER": Position als
+// Zuordnung, Label-Regel fuer das Kind, Marge als Plausibilitaets-Bremse.
+// Was der Leser NICHT kann, sendet er NICHT und schreibt den Grund in den
+// Bericht — ein geratener Kandidat waere schlimmer als keiner (dieselbe Regel
+// wie beim bet-at-home-Hook).
+//
+// Der Waechter in `test/hook_bet365.test.js` wurde dafuer BEWUSST geaendert
+// („der Hook schreibt nur Berichte, niemals Quoten" → „er schreibt Quoten,
+// aber nur über die Zeilen-Regeln, und nie einen geratenen Kandidaten") — mit
+// Begruendung und neuen Tests, nicht still.
+//
+// WARUM KEIN eigener Abruf: bet365 ist Cloudflare-geschuetzt — ein HTTP-Client
+// bekommt 403, ein headless-Chromium ebenso (live gemessen 08.10.2026); mit
+// dem ECHTEN Chrome laedt die Seite und zeigt Quoten im DOM. Es gibt keine
+// offene JSON-API: die Pods (`/pullpodapi/*`, `/leftnavcontentapi/*`)
+// antworten im eigenen `F|…`-Format, die Live-Quoten laufen ueber binaere
+// WebSockets (`wss://*.365lpodds.com/zap/`).
+//
+// KEIN Timer, KEIN Auto-Loop (getestet): nur der sichtbare Knopf liest.
+//
+// Mitschnitt: `WebSocket`, `XMLHttpRequest` und `fetch` werden ab
+// `document-start` protokolliert (URL, Typ, Zeitpunkt, Anzahl) — so steht im
+// Bericht, welche Wege die Seite TATSÄCHLICH benutzt, ohne dass der Hook
+// selbst einen einzigen Request erzeugt.
+//
+// VIERTER Weg (live gemessen 08.10.2026): `window.bet365.messageBus` ist eine
+// App-Ebene mit `subscribeToEvent`/`broadcastEvent`/`postMessageRequest` —
+// also die Stelle, an der die Seite ihre Daten INNEN weitergibt. Wird sie
+// mitgeschnitten, zeigt der naechste Klick, ob die Quoten als benannte
+// Nutzlast ankommen (dann ist DAS der Weg, nicht das DOM mit den obfuskierten
+// `rgl-*`-Klassen). Mitschnitt = nur Namen/Zaehlung/kurzer Anfang, kein
+// Nutzlast-Dump.
+
+const B365_PIPE_LOG = 'http://127.0.0.1:8765/log';
+const B365_PIPE_ODDS = 'http://127.0.0.1:8765/odds';
+const B365_MAX_EREIGNISSE = 600;      // Mitschnitt begrenzen (kein Speicherfresser)
+const B365_MAX_QUOTEN = 60;           // Beispiele im Bericht
+const B365_MAX_KLASSEN = 40;
+const B365_MAX_RASTER_PROBEN = 12;    // Struktur-Proben je Bericht
+const B365_MAX_RASTER_TEXTE = 24;     // Texten je Probe (Coupon-Kontext)
+const B365_ANKER_EBENEN = 4;          // gemessen: 4 Ebenen ueber der Quote liegt die Zeile
+const B365_MAX_LESER_ZEILEN = 400;    // Zeilen je Klick begrenzen
+const B365_MAX_LESER_KANDIDATEN = 1200;
+
+// ---------- Reine Funktionen (Node-testbar, keine Browser-API) ----------
+
+// Sieht der Text wie eine dezimale Quote aus? „2.05" ja, „2,05" ja (deutsches
+// Komma), „2026" nein, „1.00" nein (Platzhalter/kein Gewinn).
+function b365IstQuote(text) {
+  const s = String(text === null || text === undefined ? '' : text)
+    .trim().replace(/\s/g, '').replace(',', '.');
+  if (!/^\d{1,4}\.\d{2}$/.test(s)) return false;
+  const wert = parseFloat(s);
+  return isFinite(wert) && wert > 1.0 && wert <= 1000;
+}
+
+// URL -> Pfad ohne Host und ohne Query (fuer den Bericht: die Seite haengt
+// ihre IDs in die Query, die interessiert nur der Pfad).
+function b365PfadVonUrl(url) {
+  let s = String(url || '');
+  s = s.replace(/^[a-z]+:\/\/[^/]+/i, '');
+  const frage = s.indexOf('?');
+  if (frage >= 0) s = s.slice(0, frage);
+  const raute = s.indexOf('#');
+  if (raute >= 0) s = s.slice(0, raute);
+  return s || '/';
+}
+
+// Ein Argument kurz beschreiben (fuer den Bus-Bericht): Zeichenkette = ihr
+// Anfang, sonst Typ und Schluesselnamen. NIEMALS der volle Wert — der Bericht
+// liegt in einem Log.
+function b365Kurz(arg) {
+  if (arg === null || arg === undefined) return '';
+  if (typeof arg === 'string') return arg.slice(0, 60);
+  if (typeof arg === 'number' || typeof arg === 'boolean') return String(arg);
+  if (typeof arg !== 'object') return typeof arg;
+  try {
+    const keys = Object.keys(arg);
+    return '{' + keys.slice(0, 8).join(',') + (keys.length > 8 ? ',…' : '') + '}';
+  } catch (e) { return typeof arg; }
+}
+
+// messageBus-Ereignisse -> je Aufruf eine Zeile (Anzahl, Erst-/Letztzeitpunkt,
+// erster kurzer Argument-Text). Gleiche Aufrufe werden zusammengefasst — sonst
+// stehen im Bericht hunderte identische `broadcastEvent`-Zeilen.
+function b365SammleBus(ereignisse) {
+  const pro = {};
+  for (const e of ereignisse || []) {
+    if (!e || e.art !== 'bus') continue;
+    const key = e.typ || '?';
+    if (!pro[key]) {
+      pro[key] = { aufruf: key, n: 0, erste: e.ts, letzte: e.ts, text: e.url || '' };
+    }
+    pro[key].n += 1;
+    pro[key].letzte = e.ts;
+    if (!pro[key].text && e.url) pro[key].text = e.url;
+  }
+  return Object.keys(pro).map(k => pro[k]).sort((a, b) => b.n - a.n);
+}
+
+// Klassenliste -> Histogramm [[name, n], …] absteigend sortiert.
+function b365ZaehleKlassen(klassen) {
+  const zaehler = {};
+  for (const roh of klassen || []) {
+    for (const c of String(roh || '').split(/\s+/)) {
+      if (!c) continue;
+      zaehler[c] = (zaehler[c] || 0) + 1;
+    }
+  }
+  return Object.keys(zaehler)
+    .map(k => [k, zaehler[k]])
+    .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1));
+}
+
+// Mitschnitt-Ereignisse -> Zaehlung je (Typ, Pfad). Gleiche Wege werden
+// zusammengefasst und mit Erst-/Letztzeitpunkt gefuehrt — sonst stehen im
+// Bericht 400 identische Pod-Aufrufe.
+function b365FasseAnfragen(ereignisse) {
+  const pro = {};
+  for (const e of ereignisse || []) {
+    if (!e || e.art !== 'anfrage') continue;
+    const pfad = b365PfadVonUrl(e.url);
+    const key = (e.typ || '?') + ' ' + pfad;
+    if (!pro[key]) pro[key] = { typ: e.typ || '?', pfad, n: 0, erste: e.ts, letzte: e.ts };
+    pro[key].n += 1;
+    pro[key].letzte = e.ts;
+  }
+  return Object.keys(pro).map(k => pro[k]).sort((a, b) => b.n - a.n);
+}
+
+// WebSocket-Adressen aus dem Mitschnitt, dedupliziert und ohne die
+// Nutzer-ID in der Query (die ist personenbezogen).
+function b365SammleSockets(ereignisse) {
+  const raus = [];
+  for (const e of ereignisse || []) {
+    if (!e || e.art !== 'socket') continue;
+    const ohneId = b365PfadVonUrl(e.url);
+    if (raus.indexOf(ohneId) === -1) raus.push(ohneId);
+  }
+  return raus;
+}
+
+// ---------- Raster-Struktur (der Messwert fuer einen Zeilen-Leser) ----------
+//
+// GEMESSEN (08.10.2026, Startseite #/HO/): um eine Quote liegt vier Ebenen
+// hoeher der Text ihres Coupons —
+//   SPAN.rgl-f8e95e (data-content="1.92")
+//     DIV.rgl-fb479a
+//       DIV.rgl-9208e7 cpr-f3 rgl-9208e7
+//         DIV.cpr-73
+//           DIV.rgl-542d6e   ← Texten dieses Containers:
+//             ["TB Buccaneers", "DAL Cowboys", "+8.5", "-8.5", "O 48.5", "U 48.5"]
+// Und: auf einer Liga-/Event-Seite steht die Huelle (Wettbewerbs-Name, Tabs
+// "Wetten"/"Spezialwetten"), aber **0 Quoten** (drei Routen geprueft,
+// unveraendert nach 45 s — Bundesliga 1./2. am 08.10.2026, in der
+// Laenderspiel-Pause). Ob dort mit Spielen Quoten erscheinen, ist die offene
+// Frage — und sie braucht EINEN Klick in der eigenen, angemeldeten Sitzung.
+//
+// Deshalb steht hier kein Leser, der Markt und Spiel RATEN muesste (ein
+// geratener Kandidat ist schlimmer als keiner), sondern der Messwert, der die
+// Zuordnung BEWEISBAR macht: Ahnkette + Texten je Quote und die Gruppierung
+// (wie viele Quoten teilen denselben Container). Der Bericht geht an
+// `POST /log`; ein Zeilen-Leser entsteht daraus in einem Zug.
+function b365RasterStruktur(dok, maxProben) {
+  const d = dok || {};
+  const grenze = maxProben || B365_MAX_RASTER_PROBEN;
+  const alle = (typeof d.querySelectorAll === 'function')
+    ? Array.prototype.slice.call(d.querySelectorAll('*')) : [];
+  const proben = [];
+  const gruppen = {};
+  for (const el of alle) {
+    if (el.children && el.children.length) continue;
+    const ausAttr = el.getAttribute ? el.getAttribute('data-content') : null;
+    const text = (el.textContent || '').trim();
+    const wert = b365IstQuote(ausAttr) ? String(ausAttr).trim()
+      : (b365IstQuote(text) ? text : null);
+    if (!wert) continue;
+    const kette = [];
+    let n = el;
+    for (let i = 0; i < 5 && n; i++) {
+      kette.push((n.tagName || '?') + '.' + String(n.className || '').slice(0, 60));
+      n = n.parentElement || null;
+    }
+    // Vier Ebenen hoeher liegt der Coupon — dort stehen die Texte.
+    let w = el;
+    for (let i = 0; i < 4 && w && w.parentElement; i++) w = w.parentElement;
+    const texte = [];
+    if (w && typeof w.querySelectorAll === 'function') {
+      for (const k of Array.prototype.slice.call(w.querySelectorAll('*'))) {
+        if (k.children && k.children.length) continue;
+        const t = (k.textContent || '').trim();
+        if (!t || t.length >= 40) continue;
+        texte.push(t);
+        if (texte.length >= B365_MAX_RASTER_TEXTE) break;
+      }
+    }
+    const schluessel = w ? String(w.className || '').slice(0, 60) : '?';
+    gruppen[schluessel] = (gruppen[schluessel] || 0) + 1;
+    if (proben.length < grenze) {
+      proben.push({ q: wert, kette,
+        eltern_felder: !!(el.getAttribute && el.getAttribute('data-content')),
+        texte });
+    }
+  }
+  return {
+    quoten_gesamt: Object.keys(gruppen).reduce((s, k) => s + gruppen[k], 0),
+    gruppen: Object.keys(gruppen).map(k => [k, gruppen[k]])
+      .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1)),
+    proben,
+  };
+}
+
+// Kandidaten fuer den WETTBEWERBS-Namen der offenen Seite.
+//
+// GEMESSEN (08.10.2026): bet365 traegt ihn als "<Land> - <Wettbewerb>" (z. B.
+// „Deutschland - DEL") und nennt ihn mehrfach (Kopf UND Navigation).
+// `document.title` ist dagegen generisch („bet365 - Sportwetten Online") und
+// damit unbrauchbar. Bewusst kein Raten: es zaehlen nur kurze Zeilen, die dem
+// Muster entsprechen UND mindestens zweimal vorkommen — ein Spielname
+// („A - B") steht genau einmal im Spielplan.
+function b365WettbewerbsKandidaten(dok) {
+  const d = dok || {};
+  const text = (d.body && d.body.innerText) ? String(d.body.innerText) : '';
+  const zaehler = {};
+  for (const roh of text.split('\n')) {
+    const z = roh.trim();
+    if (z.length < 5 || z.length > 70) continue;
+    if (!/^\S.{1,28} - \S.{1,40}$/.test(z)) continue;
+    if (b365IstQuote(z)) continue;
+    zaehler[z] = (zaehler[z] || 0) + 1;
+  }
+  return Object.keys(zaehler)
+    .filter(k => zaehler[k] >= 2)
+    .map(k => ({ name: k, n: zaehler[k] }))
+    .sort((a, b) => (b.n - a.n) || (a.name < b.name ? -1 : 1));
+}
+
+// ---------- Zeilen-LESER (v9.13.3) ----------
+//
+// Was hier entsteht, ist der Weg von der gemessenen DOM-Struktur zu den
+// KANONISCHEN Kandidaten, die die Pipe in `odds_history` legt (dieselbe Form
+// wie der bet-at-home-Hook). Drei Regeln, die den Leser von einem Ratenden
+// unterscheiden — und alle drei sind rein und damit node-testbar:
+//
+//   1. **Position ist die Zuordnung.** Innerhalb einer Zeile (gemessen: der
+//      Anker vier Ebenen ueber der Quote) gehoeren der i-te Text und die i-te
+//      Quote zusammen. Nur wenn die Zahl BEIDER gleich ist, wird gelesen —
+//      sonst faellt die Zeile mit Grund (`paare`) aus, ohne Kandidat.
+//   2. **Die Label-Regel entscheidet das Kind**, nicht die Position im Grid:
+//      „O 48.5" -> `ou485O`, „Ja"/„Nein" -> `bttsY`/`bttsN`, „X"/„Draw" ->
+//      `h3D`, Teamname -> Siegermarkt. Handicaps („+8.5"/„-8.5") haben im
+//      Katalog **kein** Kind und werden bewusst uebersprungen.
+//   3. **Die Buchmacher-Marge muss stimmen.** Je Marktgruppe wird die Summe
+//      der impliziten Wahrscheinlichkeiten geprueft: unter 1,00 oder ueber
+//      1,60 ist bei EINEM Buchmacher unmoeglich — dann hat die Zuordnung
+//      nicht gestimmt und es wird NICHTS gesendet (Grund `summe`). Ein
+//      geratener Kandidat waere schlimmer als keiner (dieselbe Regel wie im
+//      bet-at-home-Hook).
+//
+// Die MARGE ist zugleich der Beweis fuer Regel 1: im gemessenen Coupon
+// ergaben die drei Zweierpaare 1,067 / 1,067 / 1,066 — genau das Bild eines
+// Buchmachers, nicht einer verrutschten Zuordnung.
+
+// Zahl aus einem Kurztext („48.5", „2,5", „+8.5"). Vorzeichen wird gemeldet,
+// weil es Handicap (mit Vorzeichen) von Linie (ohne) trennt.
+function b365ZahlAusText(text) {
+  const s = String(text === null || text === undefined ? '' : text)
+    .trim().replace(/\s+/g, '').replace(',', '.');
+  const m = /^([+-]?)(\d{1,3})(?:\.(\d{1,2}))?$/.exec(s);
+  if (!m) return null;
+  const wert = parseFloat(m[2] + (m[3] ? '.' + m[3] : ''));
+  if (!isFinite(wert)) return null;
+  return { zahl: wert, vorzeichen: m[1] || '' };
+}
+
+// Linien-Schluessel fuer das O/U-Kind: „2.5" -> „25", „48.5" -> „485".
+// Muss zeichengleich der Python-Regel sein (`_linie_zu_kind_zahl` in
+// freiwetten_test_scanner.py = f"{int(round(linie * 10)):02d}"), sonst findet
+// der Kandidat keine Gegenquote in der DB.
+function b365LinienSchluessel(zahl) {
+  const wert = typeof zahl === 'number' ? zahl : parseFloat(String(zahl));
+  if (!isFinite(wert) || wert <= 0) return null;
+  const zehntel = Math.round(wert * 10);
+  if (zehntel <= 0) return null;
+  return String(zehntel).padStart(2, '0');
+}
+
+const B365_OU_RICHTUNG = {
+  o: 'O', over: 'O', 'über': 'O', ueber: 'O',
+  u: 'U', under: 'U', unter: 'U',
+};
+const B365_BTTS_RICHTUNG = { ja: 'Y', yes: 'Y', nein: 'N', no: 'N' };
+const B365_DRAW_WOERTER = ['x', 'draw', 'unentschieden', 'remis', 'tie'];
+// Siegermarkt-Kurztexte, die KEIN Teamname sind (die Auswahl steht dann in
+// eigenen Spalten „1"/„X"/„2").
+const B365_SIEGER_WOERTER = { '1': 'A', home: 'A', heim: 'A', '2': 'B', away: 'B',
+  'auswärts': 'B', auswaerts: 'B', gast: 'B' };
+// Markt-Ueberschriften — sie sind kein Teamname (im gemessenen Coupon standen
+// sie nicht in der Zeile, aber die Regel darf sie nie als Team lesen).
+const B365_MARKT_WOERTER = ['money line', 'moneyline', 'sieger', 'gewinner',
+  'match winner', '1x2', 'endstand', 'ergebnis', 'beide teams treffen',
+  'both teams to score', 'ueber/unter', 'über/unter', 'over/under',
+  'handicap', 'spread', 'gesamt', 'total'];
+
+// Was IST dieses Label? Rein (kein DOM), eine Stelle fuer alle Faelle.
+// Rueckgabe: {art, richtung?, linie?} oder null (leer).
+//   art 'ou'     Uber/Unter MIT Linie im Text („O 48.5", „Über 2,5") —
+//                die gemessene Form; ohne Linie bleibt `linie` weg.
+//   art 'btts'   Ja/Nein
+//   art 'ml'     Sieger: richtung A (heim/„1") / B (aus/„2") / D („X")
+//   art 'team'   Teamname (Seite entscheidet der Aufrufer ueber die Position)
+//   art 'spread' Handicap mit Vorzeichen — kein Kind im Katalog
+//   art 'linie'  reine Linie („2.5") — Markt-Kopf, keine Auswahl
+//   art 'markt'  Markt-Ueberschrift
+function b365LabelArt(label) {
+  const roh = String(label === null || label === undefined ? '' : label).trim();
+  if (!roh) return null;
+  const s = roh.toLowerCase().replace(/\s+/g, ' ');
+  // 1. Uber/Unter, Linie im selben Text („o 48.5", „über 2,5")
+  let m = /^(o|u|over|under|über|unter|ueber)\s*([+-]?\d+(?:[.,]\d+)?)$/.exec(s);
+  if (m && B365_OU_RICHTUNG[m[1]]) {
+    const linie = b365ZahlAusText(m[2]);
+    if (linie) return { art: 'ou', richtung: B365_OU_RICHTUNG[m[1]], linie: linie.zahl };
+  }
+  // 2. … und die umgekehrte Reihenfolge („48.5 o", „2,5 über")
+  m = /^([+-]?\d+(?:[.,]\d+)?)\s*(o|u|over|under|über|unter|ueber)$/.exec(s);
+  if (m && B365_OU_RICHTUNG[m[2]]) {
+    const linie = b365ZahlAusText(m[1]);
+    if (linie) return { art: 'ou', richtung: B365_OU_RICHTUNG[m[2]], linie: linie.zahl };
+  }
+  // 3. Richtung ohne Linie („Über" allein) — Linie fehlt, Aufrufer entscheidet
+  if (B365_OU_RICHTUNG[s]) return { art: 'ou', richtung: B365_OU_RICHTUNG[s] };
+  // 4. Beide Teams treffen
+  if (B365_BTTS_RICHTUNG[s]) return { art: 'btts', richtung: B365_BTTS_RICHTUNG[s] };
+  // 5. Unentschieden
+  if (B365_DRAW_WOERTER.indexOf(s) >= 0) return { art: 'ml', richtung: 'D' };
+  // 6. Sieger-Spalten „1"/„1 Heim"/„2 Auswärts"
+  if (B365_SIEGER_WOERTER[s]) return { art: 'ml', richtung: B365_SIEGER_WOERTER[s] };
+  // 7. Handicap (Vorzeichen) — kein Kind, bewusst uebersprungen
+  const z = b365ZahlAusText(s);
+  if (z && z.vorzeichen) return { art: 'spread' };
+  // 8. Reine Linie/Markt-Kopf
+  if (z) return { art: 'linie' };
+  // 9. Markt-Ueberschrift
+  if (B365_MARKT_WOERTER.indexOf(s) >= 0) return { art: 'markt' };
+  // 10. sonst: Teamname
+  return { art: 'team', text: roh };
+}
+
+// Siegermarkt-Familie je Sportart — EINE Tabelle. Quelle:
+// `buchmacher_registry.ZWEI_WEG_ML_SPORTARTEN` (Tennis, American Football,
+// Darts sind Zweiwege) und die 3-Wege-Sportarten der Direkt-Quellen (Soccer
+// 1X2, Basketball/Eishockey regulaere Spielzeit). Bewusst KEIN zweites
+// Regelwerk im Userscript und bewusst KEIN Rueckfall auf Zweiwege fuer
+// diese drei: bei ihnen waere ein Zweiwege-ML ein ANDERER Markt
+// („ohne Unentschieden" bzw. „inkl. Verlaengerung") — geraten waere falsch.
+function b365MlFamilie(sport) {
+  const s = String(sport || '').toLowerCase();
+  if (s === 'tennis' || s === 'american-football' || s === 'darts') return 'bl';
+  return 'h3';
+}
+
+// Eine Zeile (Texten UND Quoten in Dokumentreihenfolge) -> Kandidaten.
+// `spiel` ist „Heim - Aus" (aus der Zeile oder ihrem Umfeld), `sport` die
+// gewaehlte Sportart. Rueckgabe: {kandidaten, gruende} — `gruende` zaehlt,
+// WARUM eine Zeile/Quote ausfaellt (geht in den Bericht, kein stiller Ausstieg).
+function b365ZeileKandidaten(labels, quoten, spiel, sport, league) {
+  const raus = [];
+  const gruende = {};
+  const plus = (g) => { gruende[g] = (gruende[g] || 0) + 1; };
+  const texte = Array.isArray(labels) ? labels : [];
+  const werte = Array.isArray(quoten) ? quoten : [];
+  if (!texte.length || texte.length !== werte.length) {
+    plus('paare');
+    return { kandidaten: raus, gruende };
+  }
+  if (!spiel || spiel.indexOf(' - ') < 0) {
+    plus('spiel');
+    return { kandidaten: raus, gruende };
+  }
+  const arten = texte.map(b365LabelArt);
+  // Teamnamen (art 'team') in Reihenfolge; die ERSTE ist Heim (so listen die
+  // Buchmacher), die zweite Aus. Ohne zwei Teamnamen ist kein Spiel-Match
+  // moeglich — die Zeile faellt aus (nicht raten).
+  const teams = [];
+  arten.forEach((a, i) => { if (a && a.art === 'team') teams.push({ i, text: a.text }); });
+  let heim = '';
+  let aus = '';
+  if (teams.length === 2) { heim = teams[0].text; aus = teams[1].text; }
+  const hatDraw = arten.some(a => a && a.art === 'ml' && a.richtung === 'D');
+  const familie = b365MlFamilie(sport);
+  // ---- Siegermarkt -------------------------------------------------------
+  const mlIdx = { A: -1, B: -1, D: -1 };
+  arten.forEach((a, i) => {
+    if (!a) return;
+    if (a.art === 'ml') { if (mlIdx[a.richtung] < 0) mlIdx[a.richtung] = i; return; }
+    // Zwei Teamnamen in einer 2-Wege-Zeile sind selbst der Siegermarkt.
+    if (a.art === 'team' && teams.length === 2) {
+      if (i === teams[0].i && mlIdx.A < 0) mlIdx.A = i;
+      if (i === teams[1].i && mlIdx.B < 0) mlIdx.B = i;
+    }
+  });
+  const mlVorhanden = (mlIdx.A >= 0 && mlIdx.B >= 0 && (familie === 'bl' || mlIdx.D >= 0));
+  if (mlVorhanden) {
+    if (familie === 'bl' && hatDraw) {
+      // 2-Wege-Sportart mit gezeichnetem Unentschieden: widerspruechlich.
+      plus('ml_form');
+    } else {
+      const kandidaten = [];
+      const seiten = familie === 'bl' ? ['A', 'B'] : ['A', 'D', 'B'];
+      for (const seite of seiten) {
+        const idx = mlIdx[seite];
+        if (idx < 0) continue;
+        const q = werte[idx];
+        if (!b365IstQuote(q)) continue;
+        kandidaten.push({
+          kind: 'h3' + seite, quote: String(q), label: texte[idx],
+          seite: seite === 'A' ? (heim || texte[idx])
+            : (seite === 'B' ? (aus || texte[idx]) : 'Unentschieden'),
+          art: 'ml',
+        });
+      }
+      // bl-Kinds entstehen aus der ZWEIWEGE-Form: h3A/h3B sind die Ausgaenge.
+      if (familie === 'bl' && kandidaten.length === 2) {
+        kandidaten[0].kind = 'blA';
+        kandidaten[1].kind = 'blB';
+      }
+      const summe = b365Summe(kandidaten.map(k => k.quote));
+      if (!b365SummePlausibel(summe)) plus('summe');
+      else raus.push(...kandidaten);
+    }
+  } else if (hatDraw && familie === 'bl') {
+    // Zweiwege-Sportart mit gezeichnetem Unentschieden — widerspruechlich.
+    plus('ml_form');
+  } else if (teams.length === 2 && familie === 'h3' && !hatDraw) {
+    // Dreiwege-Sportart mit einem Zweiwege-Siegermarkt: das ist ein ANDERER
+    // Markt („ohne Unentschieden“) — bewusst nicht gesendet, aber gezaehlt.
+    plus('ml_form');
+  }
+  // ---- Ueber/Unter (je Linie O+U) ---------------------------------------
+  const proLinie = {};
+  arten.forEach((a, i) => {
+    if (!a || a.art !== 'ou') return;
+    const schluessel = (a.linie === undefined) ? '?' : String(a.linie);
+    if (a.linie === undefined) { plus('linie'); return; }
+    proLinie[schluessel] = proLinie[schluessel] || {};
+    if (proLinie[schluessel][a.richtung]) return;
+    proLinie[schluessel][a.richtung] = { i, quote: werte[i], label: texte[i] };
+  });
+  for (const linie of Object.keys(proLinie)) {
+    const paare = proLinie[linie];
+    if (!paare.O || !paare.U) { plus('unvollstaendig'); continue; }
+    if (!b365IstQuote(paare.O.quote) || !b365IstQuote(paare.U.quote)) {
+      plus('quote');
+      continue;
+    }
+    const summe = b365Summe([paare.O.quote, paare.U.quote]);
+    if (!b365SummePlausibel(summe)) { plus('summe'); continue; }
+    const schluessel = b365LinienSchluessel(parseFloat(linie));
+    if (!schluessel) { plus('linie'); continue; }
+    raus.push({ kind: 'ou' + schluessel + 'O', quote: String(paare.O.quote),
+      label: 'Ueber/Unter ' + linie + ' (O)', seite: 'OVER', art: 'ou' });
+    raus.push({ kind: 'ou' + schluessel + 'U', quote: String(paare.U.quote),
+      label: 'Ueber/Unter ' + linie + ' (U)', seite: 'UNDER', art: 'ou' });
+  }
+  // ---- Beide Teams treffen (Soccer) -------------------------------------
+  const btts = {};
+  arten.forEach((a, i) => {
+    if (!a || a.art !== 'btts') return;
+    if (btts[a.richtung]) return;
+    btts[a.richtung] = { i, quote: werte[i], label: texte[i] };
+  });
+  if (btts.Y || btts.N) {
+    if (!btts.Y || !btts.N) { plus('unvollstaendig'); }
+    else if (!b365IstQuote(btts.Y.quote) || !b365IstQuote(btts.N.quote)) { plus('quote'); }
+    else {
+      const summe = b365Summe([btts.Y.quote, btts.N.quote]);
+      if (!b365SummePlausibel(summe)) plus('summe');
+      else {
+        raus.push({ kind: 'bttsY', quote: String(btts.Y.quote),
+          label: 'Beide Teams treffen (Ja)', seite: 'YES', art: 'btts' });
+        raus.push({ kind: 'bttsN', quote: String(btts.N.quote),
+          label: 'Beide Teams treffen (Nein)', seite: 'NO', art: 'btts' });
+      }
+    }
+  }
+  // ---- Handicaps/Spreads: kein Kind im Katalog, aber gezaehlt -------------
+  arten.forEach(a => { if (a && a.art === 'spread') plus('spread'); });
+  if (!raus.length) plus('leer');
+  return { kandidaten: raus, gruende };
+}
+
+// Summe der impliziten Wahrscheinlichkeiten (Buchmacher-Marge + 1).
+function b365Summe(quoten) {
+  let s = 0;
+  for (const q of quoten || []) {
+    const w = parseFloat(String(q).replace(',', '.'));
+    if (!isFinite(w) || w <= 1) return null;
+    s += 1 / w;
+  }
+  return s;
+}
+
+// Plausibel fuer EINEN Buchmacher: nie unter 1,00 (das waere ein Surebet
+// innerhalb eines Buchs) und nie ueber 1,60 (absurde Marge).
+function b365SummePlausibel(summe) {
+  return typeof summe === 'number' && isFinite(summe) && summe >= 1.0 && summe <= 1.6;
+}
+
+// Text eines Elements (fuer die Kopf-Suche): innerText, sonst textContent.
+function b365TextVon(el) {
+  if (!el) return '';
+  if (typeof el.innerText === 'string' && el.innerText) return el.innerText;
+  return String(el.textContent || '');
+}
+
+// Spiel-Namen-Kandidaten in einem Textblock: kurze Zeilen der Form „A - B".
+// Bewusst nicht die Quote und nicht mit Schraegstrich (Marktnamen wie
+// „Ueber/Unter"). Gleiche Regel wie `b365WettbewerbsKandidaten`, nur ohne die
+// Mehrfach-Bedingung: hier zaehlt die NAEHE zur Zeile.
+function b365SpielKandidaten(text) {
+  const raus = [];
+  for (const roh of String(text || '').split('\n')) {
+    const z = roh.trim();
+    if (z.length < 5 || z.length > 70) continue;
+    if (!/^\S.{1,28} - \S.{1,40}$/.test(z)) continue;
+    if (b365IstQuote(z)) continue;
+    if (z.indexOf('/') >= 0) continue;
+    if (raus.indexOf(z) < 0) raus.push(z);
+  }
+  return raus;
+}
+
+// Spielname fuer eine Zeile: (1) zwei Teamnamen IN der Zeile (gemessene
+// Coupon-Form), (2) sonst der naechste Kopf darueber, der GENAU EINEN
+// „A - B"-Text traegt (Raster-Form: der jeweilige Markt ist eine eigene
+// Zeile, der Spielname steht im Kopf des Spiel-Blocks). Findet sich nichts,
+// bleibt der Name leer — die Zeile faellt dann mit Grund `spiel` aus.
+function b365SpielFuerZeile(anker, texte) {
+  const teams = [];
+  for (const t of texte || []) {
+    const a = b365LabelArt(t);
+    if (a && a.art === 'team') teams.push(a.text);
+  }
+  if (teams.length === 2) return teams[0] + ' - ' + teams[1];
+  let n = anker;
+  for (let i = 0; i < 6 && n && n.parentElement; i++) {
+    n = n.parentElement;
+    const treffer = b365SpielKandidaten(b365TextVon(n));
+    if (treffer.length === 1) return treffer[0];
+  }
+  return '';
+}
+
+// Der Zeilen-Leser: das DOM rein lesen, keine Browser-API ausser
+// `querySelectorAll`/`parentElement`/`getAttribute`. Rueckgabe:
+//   {kandidaten, gruende, zeilen, proben}
+// `gruende` zaehlt die Ausfaelle (geht in den Bericht — kein stiller Ausstieg),
+// `proben` sind die ersten Zeilen roh (Texte + Quoten), damit EIN Klick
+// belegt, was der Leser gesehen hat.
+function b365LeseZeilen(dok, sport, league) {
+  const d = dok || {};
+  const alle = (typeof d.querySelectorAll === 'function')
+    ? Array.prototype.slice.call(d.querySelectorAll('*')) : [];
+  const istBlatt = (el) => !(el.children && el.children.length);
+  const quoteVon = (el) => {
+    const ausAttr = el.getAttribute ? el.getAttribute('data-content') : null;
+    if (b365IstQuote(ausAttr)) return String(ausAttr).trim();
+    const t = String(el.textContent || '').trim();
+    return b365IstQuote(t) ? t : null;
+  };
+  const ankerVon = (el) => {
+    let a = el;
+    for (let i = 0; i < B365_ANKER_EBENEN && a.parentElement; i++) a = a.parentElement;
+    return a;
+  };
+  // 1. Quoten sammeln und nach Anker gruppieren (ein Anker = eine Zeile).
+  const gruppen = [];
+  for (const el of alle) {
+    if (!istBlatt(el)) continue;
+    const wert = quoteVon(el);
+    if (!wert) continue;
+    const anker = ankerVon(el);
+    if (!anker) continue;
+    let g = null;
+    for (const k of gruppen) { if (k.anker === anker) { g = k; break; } }
+    if (!g) { g = { anker: anker, quoten: [], texte: [] }; gruppen.push(g); }
+    if (g.quoten.length < 64) g.quoten.push(wert);
+  }
+  // 2. Texte je Zeile: Blaetter IM Anker, die keine Quote sind. Bevorzugt
+  //    `anker.querySelectorAll('*')` — genau der Weg, mit dem die Struktur
+  //    gemessen wurde (und der einzige, der auf einer grossen Seite nicht
+  //    je Zeile die ganze Seite durchlaeuft).
+  for (const g of gruppen) {
+    const blaetter = (typeof g.anker.querySelectorAll === 'function')
+      ? Array.prototype.slice.call(g.anker.querySelectorAll('*'))
+      : alle;
+    for (const el of blaetter) {
+      if (!istBlatt(el)) continue;
+      if (!b365IstNachfahre(el, g.anker)) continue;
+      if (quoteVon(el)) continue;
+      const t = String(el.textContent || '').trim();
+      if (!t || t.length >= 40) continue;
+      g.texte.push(t);
+      if (g.texte.length >= 64) break;
+    }
+  }
+  // 3. Je Zeile die Kandidaten — Grossenbegrenzung, damit ein Klick nie
+  //    hunderte Zeilen in eine Anfrage schreibt.
+  const kandidaten = [];
+  const gruende = {};
+  const proben = [];
+  let zeilen = 0;
+  for (const g of gruppen) {
+    if (zeilen >= B365_MAX_LESER_ZEILEN) { gruende['grenze'] = (gruende['grenze'] || 0) + 1; break; }
+    zeilen += 1;
+    const spiel = b365SpielFuerZeile(g.anker, g.texte);
+    const e = b365ZeileKandidaten(g.texte, g.quoten, spiel, sport, league);
+    for (const k of Object.keys(e.gruende)) {
+      gruende[k] = (gruende[k] || 0) + e.gruende[k];
+    }
+    if (e.kandidaten.length) {
+      for (const k of e.kandidaten) {
+        if (kandidaten.length >= B365_MAX_LESER_KANDIDATEN) { gruende['kandidaten_grenze'] = 1; break; }
+        k.art = k.art || '';
+        kandidaten.push({ kind: k.kind, quote: k.quote, label: k.label,
+          seite: k.seite, art: k.art, spiel: spiel, league: league });
+      }
+    }
+    if (proben.length < 3) {
+      proben.push({ spiel: spiel, texte: g.texte.slice(0, 12), quoten: g.quoten.slice(0, 12) });
+    }
+  }
+  return { kandidaten: kandidaten, gruende: gruende, zeilen: zeilen, proben: proben };
+}
+
+// Ist `el` ein Nachfahre von `anker` (ueber parentElement-Kette)?
+function b365IstNachfahre(el, anker) {
+  let n = el;
+  for (let i = 0; i < 12 && n; i++) {
+    if (n === anker) return true;
+    n = n.parentElement || null;
+  }
+  return false;
+}
+
+// Kurzzeile fuer Knopf und Log (der volle Bericht folgt in der zweiten Zeile).
+function b365BerichtZeile(bericht) {
+  const b = bericht || {};
+  const leser = b.leser || {};
+  return '[BET365-MESSUNG] url=' + (b.hash || b.url || '?')
+    + ' quoten=' + (b.quoten_anzahl || 0)
+    + ' kand=' + (leser.kandidaten || 0)
+    + ' zeilen=' + (leser.zeilen || 0)
+    + ' sockets=' + ((b.websockets || []).length)
+    + ' anfragewege=' + ((b.anfragen || []).length)
+    + ' klassen=' + ((b.klassen || []).length)
+    + ' bus=' + ((b.bus || []).length)
+    + ' text=' + (b.textlaenge || 0);
+}
+
+// Der Wettbewerbs-Name der offenen Seite (erster Kandidat) — er geht als
+// `league` an die Pipe, genau wie beim bet-at-home-Hook der Turnier-Name.
+function b365WettbewerbName(dok) {
+  const k = b365WettbewerbsKandidaten(dok);
+  return (k.length && k[0].name) || '';
+}
+
+// Leser-Ergebnis -> die Kandidatenliste der Pipe (dieselbe Form wie
+// `batathomeSende`: nur `back`, `lay` bleibt 0 — die Gegenquote kommt beim
+// Scan aus der DB). `partial: true` ist Pflicht: diese Zeilen sind KEIN
+// Scan-Stand, ein finaler Snapshot des Userscript-Scanners wuerde sie sonst
+// mitloeschen (`store_snapshot`, v9.9.39).
+function b365OddsPayload(leser, sport, ts) {
+  const l = leser || {};
+  return {
+    ts: ts || new Date().toISOString(),
+    source: 'bet365',
+    partial: true,
+    candidates: (l.kandidaten || []).map(function (k) {
+      return {
+        kind: k.kind, back: parseFloat(k.quote), lay: 0, xback: 0,
+        label: k.label || '', name: k.spiel || '', league: k.league || '',
+        leagueName: '', sport: sport || '', startTime: '', live: 0,
+        src: 'bet365',
+      };
+    }),
+  };
+}
+
+function b365SendeQuoten(pipeUrl, payload, fetchFn) {
+  const anzahl = ((payload && payload.candidates) || []).length;
+  if (!anzahl) return Promise.resolve(0);
+  return fetchFn(pipeUrl, { method: 'POST', body: JSON.stringify(payload) })
+    .then(function (r) { return (r && r.ok) ? anzahl : 0; })
+    .catch(function () { return 0; });
+}
+
+// Die Ausfaelle kurz und lesbar: „paare=6, spread=2, summe=1". Genau das
+// braucht der Nutzer, wenn nichts gesendet wurde — statt „keine Quoten".
+function b365GruendeKurz(gruende) {
+  const g = gruende || {};
+  const teile = Object.keys(g).map(function (k) { return k + '=' + g[k]; });
+  return teile.length ? teile.join(', ') : 'keine Zeile gelesen';
+}
+
+// Die Sportarten des Kästchens: englischer Wert (so heisst die Sportart in
+// der App und im Dialog), deutsche Beschriftung. Die Sportart waehlt der
+// Nutzer BEWUSST — bet365 traegt sie nicht zuverlaessig im DOM (die
+// Links-Navigation mischt alle Sportarten, live gemessen 08.10.2026), und
+// eine geratene Sportart waere ein falsches Etikett an jeder Zeile.
+const B365_SPORT_OPTIONEN = [
+  ['soccer', 'Fußball'], ['tennis', 'Tennis'], ['basketball', 'Basketball'],
+  ['ice-hockey', 'Eishockey'], ['american-football', 'American Football'],
+  ['darts', 'Darts'],
+];
+
+// WAS der Bericht enthaelt — eine Stelle, damit Test und Browser dasselbe
+// pruefen. `dok` ist ein document-aehnliches Objekt (im Test nachgebaut).
+function b365SammleBericht(dok, ereignisse, win) {
+  const d = dok || {};
+  const text = (d.body && d.body.innerText) ? String(d.body.innerText) : '';
+  const alle = (typeof d.querySelectorAll === 'function')
+    ? Array.prototype.slice.call(d.querySelectorAll('*')) : [];
+  const quoten = [];
+  const klassen = [];
+  const attribute = {};
+  const gesehen = {};
+  for (const el of alle) {
+    const kl = (typeof el.className === 'string') ? el.className : '';
+    if (kl && /market|odds|participant|fixture|selection|quote|spotlight|ss-/i.test(kl)) {
+      klassen.push(kl);
+    }
+    if (el.children && el.children.length) continue;
+    const t = (el.textContent || '').trim();
+    if (!b365IstQuote(t)) continue;
+    const eltern = el.parentElement || {};
+    const gross = (eltern && eltern.parentElement) || {};
+    const attrs = {};
+    for (const a of (el.attributes ? Array.prototype.slice.call(el.attributes) : [])) {
+      attrs[a.name] = String(a.value).slice(0, 40);
+    }
+    for (const name of Object.keys(attrs)) attribute[name] = (attribute[name] || 0) + 1;
+    if (quoten.length < B365_MAX_QUOTEN) {
+      quoten.push({
+        q: t,
+        klasse: String(el.className || '').slice(0, 80),
+        eltern: String((eltern && eltern.className) || '').slice(0, 80),
+        grosseltern: String((gross && gross.className) || '').slice(0, 80),
+        attrs,
+      });
+    }
+    const key = String(el.className || '') + '|' + t;
+    gesehen[key] = 1;
+  }
+  const global = (win && win.bet365) ? win.bet365 : null;
+  let globalInfo = null;
+  if (global) {
+    globalInfo = { typ: typeof global, keys: Object.keys(global).slice(0, 20) };
+    try {
+      if (global.app && typeof global.app === 'object') {
+        globalInfo.app_keys = Object.keys(global.app).slice(0, 40);
+      }
+      if (global.messageBus) {
+        globalInfo.messageBus_typ = typeof global.messageBus;
+        globalInfo.messageBus_keys = Object.keys(global.messageBus).slice(0, 20);
+      }
+    } catch (e) { globalInfo.fehler = String(e).slice(0, 120); }
+  }
+  let raster = null;
+  try { raster = b365RasterStruktur(d); } catch (e) { raster = null; }
+  return {
+    ts: new Date().toISOString(),
+    url: (d.location && d.location.href) || '',
+    hash: (d.location && d.location.hash) || '',
+    titel: String(d.title || ''),
+    textlaenge: text.length,
+    quoten_anzahl: Object.keys(gesehen).length,
+    quoten_beispiele: quoten,
+    klassen: b365ZaehleKlassen(klassen).slice(0, B365_MAX_KLASSEN)
+      .map(x => ({ name: x[0], n: x[1] })),
+    attribute: Object.keys(attribute)
+      .map(k => ({ name: k, n: attribute[k] }))
+      .sort((a, b) => b.n - a.n).slice(0, 30),
+    bet365_global: globalInfo,
+    // Der Messwert fuer den Zeilen-Leser: Ahnkette + Texten je Quote, die
+    // Gruppierung (gemeinsamer Container) und die Wettbewerbs-Kandidaten.
+    raster: raster,
+    wettbewerb: b365WettbewerbsKandidaten(d),
+    anfragen: b365FasseAnfragen(ereignisse).slice(0, 40),
+    websockets: b365SammleSockets(ereignisse),
+    bus: b365SammleBus(ereignisse).slice(0, 40),
+    ereignisse_gesamt: (ereignisse || []).length,
+  };
+}
+
+// ---------- Mitschnitt (Browser) ----------
+//
+// Laeuft beim Laden — OHNE Timer. Gepatcht werden nur die drei Wege, ueber die
+// eine Seite Daten holen kann; der Hook selbst erzeugt keinen einzigen.
+const B365_EREIGNISSE = [];
+
+function b365Merke(art, typ, url, speicher) {
+  const ziel = speicher || B365_EREIGNISSE;
+  if (ziel.length >= B365_MAX_EREIGNISSE) return;
+  ziel.push({ art, typ, url: String(url || ''), ts: Date.now() });
+}
+
+// `window.bet365.messageBus` mitschneiden: die Aufrufe UND die Nutzlast, die
+// bei einem `subscribeToEvent`-Handler ankommt (dort reicht die Seite ihre
+// Daten weiter). Nur Zaehlung + kurzer Anfang, alles in try/catch — eine
+// Fremdseite darf davon nie brechen.
+const B365_BUS_AUFRUFE = ['postMessageRequest', 'postAbortableMessageRequest',
+  'broadcastEvent', 'subscribeToEvent'];
+
+function b365MitschnittBus(bus, speicher) {
+  if (!bus || typeof bus !== 'object') return;
+  try {
+    if (bus.__b365) return;
+    bus.__b365 = true;
+  } catch (e) { return; }
+  for (const name of B365_BUS_AUFRUFE) {
+    let alt = null;
+    try { alt = bus[name]; } catch (e) { alt = null; }
+    if (typeof alt !== 'function' || alt.__b365) continue;
+    const neu = function () {
+      const args = Array.prototype.slice.call(arguments);
+      try {
+        b365Merke('bus', name,
+          args.map(b365Kurz).filter(Boolean).join(' | ').slice(0, 300), speicher);
+      } catch (e) { /* Mitschnitt darf nie stoeren */ }
+      // Bei einer Subscription auch den Handler umwickeln: erst dort kommen
+      // die eigentlichen Daten an.
+      if (name === 'subscribeToEvent') {
+        for (let i = 0; i < args.length; i++) {
+          if (typeof args[i] !== 'function') continue;
+          const orig = args[i];
+          args[i] = function () {
+            try {
+              const kanal = (typeof args[0] === 'string') ? args[0] : '?';
+              b365Merke('bus', 'daten:' + kanal,
+                Array.prototype.slice.call(arguments).map(b365Kurz)
+                  .filter(Boolean).join(' | ').slice(0, 300), speicher);
+            } catch (e) { /* s. o. */ }
+            return orig.apply(this, arguments);
+          };
+        }
+      }
+      return alt.apply(this, args);
+    };
+    neu.__b365 = true;
+    try { bus[name] = neu; } catch (e) { /* schreibgeschuetzt -> egal */ }
+  }
+}
+
+// `window.bet365` gibt es beim Laden noch nicht. Statt eines Timers (verboten)
+// wird das Fenster-Objekt EINMAL mit einem Setter belegt: sobald die Seite es
+// zuweist, haengt sich der Mitschnitt von selbst an den Bus. Ein Timer waere
+// hier auch unnoetig — die Zuweisung ist das Ereignis.
+function b365BeobachteBus(win, speicher) {
+  if (!win) return;
+  try {
+    const da = win.bet365;
+    if (da && da.messageBus) {
+      b365MitschnittBus(da.messageBus, speicher);
+      return;
+    }
+    if (win.__b365BusWache) return;
+    win.__b365BusWache = true;
+    let wert = da;
+    Object.defineProperty(win, 'bet365', {
+      configurable: true,
+      get() { return wert; },
+      set(neu) {
+        wert = neu;
+        try {
+          if (neu && neu.messageBus) b365MitschnittBus(neu.messageBus, speicher);
+        } catch (e) { /* s. o. */ }
+      },
+    });
+  } catch (e) { /* Fenster nicht konfigurierbar -> nur der direkte Weg */ }
+}
+
+// Das zu patchende Fenster: im Userscript die SEITE (unsafeWindow), nicht die
+// gekapselte Sandbox — dort liegt `fetch`/`WebSocket`/`bet365` der Seite.
+function b365Fenster() {
+  if (typeof unsafeWindow !== 'undefined' && unsafeWindow) return unsafeWindow;
+  if (typeof window !== 'undefined' && window) return window;
+  return null;
+}
+
+function b365Mitschnitt(win, speicher) {
+  if (!win) return;
+  try { b365BeobachteBus(win, speicher); }
+  catch (e) { /* s. o. */ }
+  try {
+    if (typeof win.fetch === 'function' && !win.fetch.__b365) {
+      const alt = win.fetch;
+      const neu = function (eingabe) {
+        try {
+          b365Merke('anfrage', 'fetch', (eingabe && eingabe.url) || eingabe, speicher);
+        } catch (e) { /* Mitschnitt darf nie stoeren */ }
+        return alt.apply(this, arguments);
+      };
+      neu.__b365 = true;
+      win.fetch = neu;
+    }
+    if (win.XMLHttpRequest && win.XMLHttpRequest.prototype
+        && !win.XMLHttpRequest.prototype.__b365) {
+      const proto = win.XMLHttpRequest.prototype;
+      const altOpen = proto.open;
+      proto.open = function (methode, url) {
+        try { b365Merke('anfrage', 'xhr', url, speicher); } catch (e) { /* s. o. */ }
+        return altOpen.apply(this, arguments);
+      };
+      proto.__b365 = true;
+    }
+    if (win.WebSocket && !win.WebSocket.__b365) {
+      const Alt = win.WebSocket;
+      const Neu = function (url) {
+        try { b365Merke('socket', 'ws', url, speicher); } catch (e) { /* s. o. */ }
+        return new Alt(url);
+      };
+      Neu.prototype = Alt.prototype;
+      Neu.__b365 = true;
+      Neu.CONNECTING = Alt.CONNECTING;
+      Neu.OPEN = Alt.OPEN;
+      Neu.CLOSING = Alt.CLOSING;
+      Neu.CLOSED = Alt.CLOSED;
+      win.WebSocket = Neu;
+    }
+  } catch (e) { /* Fremdseiten duerfen nie brechen */ }
+}
+
+// ---------- Browser-Anbindung ----------
+
+function b365SendeBericht(text, fetchFn) {
+  return fetchFn(B365_PIPE_LOG, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text, version: 'bet365-messung' }),
+  }).then(r => (r && r.ok ? 1 : 0)).catch(() => 0);
+}
+
+// Baut den Knopf an — ein Klick = ein Bericht, kein Loop, kein Poll.
+function bet365_messung_knopf() {
+  if (typeof document === 'undefined' || !document.body) return;
+  if (document.getElementById('vbsb-bet365')) return;
+
+  const box = document.createElement('div');
+  box.id = 'vbsb-bet365';
+  box.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483000;'
+    + 'background:#12161c;color:#e8eef6;border:1px solid #2b3542;border-radius:8px;'
+    + 'padding:10px 12px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.4);';
+  const status = document.createElement('div');
+  status.style.cssText = 'margin-top:6px;opacity:.85;min-height:18px;max-width:320px;';
+  status.textContent = 'Bereit — Sportart wählen, dann ein Klick.';
+  // Sportart-Kaestchen (v9.13.3): bet365 traegt die Sportart nicht
+  // zuverlaessig im DOM, sie ist aber das Etikett JEDER Zeile — deshalb eine
+  // bewusste Auswahl statt eines Rates.
+  const wahl = document.createElement('select');
+  wahl.style.cssText = 'margin-bottom:6px;width:100%;padding:4px 6px;border-radius:6px;'
+    + 'border:1px solid #3a4655;background:#1d2530;color:#e8eef6;';
+  for (const op of B365_SPORT_OPTIONEN) {
+    const o = document.createElement('option');
+    o.value = op[0];
+    o.textContent = op[1];
+    wahl.appendChild(o);
+  }
+  wahl.value = 'soccer';
+  const btn = document.createElement('button');
+  btn.textContent = 'bet365 messen';
+  btn.style.cssText = 'cursor:pointer;padding:6px 10px;border-radius:6px;'
+    + 'border:1px solid #3a4655;background:#1d2530;color:#e8eef6;';
+
+  function zeigeMeldung(text, farbe) {
+    status.textContent = text;
+    status.style.color = farbe || '#e8eef6';
+  }
+
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    zeigeMeldung('lese Quoten + sammle Bericht …');
+    const win = b365Fenster() || window;
+    // Der Bus kann erst jetzt existieren (die Seite baut sich nach dem Laden
+    // auf) — vor dem Bericht noch einmal anhaengen, sonst fehlt er still.
+    try { b365BeobachteBus(win, B365_EREIGNISSE); } catch (e) { /* egal */ }
+    const sport = (wahl && wahl.value) || 'soccer';
+    let bericht = null;
+    let leser = null;
+    try {
+      const league = b365WettbewerbName(document);
+      leser = b365LeseZeilen(document, sport, league);
+      bericht = b365SammleBericht(document, B365_EREIGNISSE, win);
+      bericht.sport = sport;
+      bericht.leser = {
+        kandidaten: leser.kandidaten.length, zeilen: leser.zeilen,
+        gruende: leser.gruende, proben: leser.proben,
+      };
+    } catch (e) {
+      zeigeMeldung('Lesen fehlgeschlagen: ' + String(e).slice(0, 120), '#ff9f9f');
+      btn.disabled = false;
+      return;
+    }
+    const kurz = b365BerichtZeile(bericht);
+    const text = kurz + '\n' + JSON.stringify(bericht);
+    console.log(kurz, bericht);
+    const fetchFn = (typeof GM_xmlhttpRequest === 'function')
+      ? function (url, opts) {
+          return new Promise(function (resolve, reject) {
+            GM_xmlhttpRequest({
+              method: opts.method || 'GET', url: url, data: opts.body,
+              headers: opts.headers || { 'Content-Type': 'application/json' },
+              onload: function (r) { resolve({ ok: r.status >= 200 && r.status < 300 }); },
+              onerror: reject,
+            });
+          });
+        }
+      : function (url, opts) { return fetch(url, opts); };
+    // Erst die Quoten (die App braucht sie), dann der Bericht (die Diagnose) —
+    // beide in EINEM Klick.
+    const payload = b365OddsPayload(leser, sport);
+    b365SendeQuoten(B365_PIPE_ODDS, payload, fetchFn).then(function (n) {
+      return b365SendeBericht(text, fetchFn).then(function (ok) {
+        return { n: n, ok: ok };
+      });
+    }).then(function (r) {
+      btn.disabled = false;
+      if (!r.ok) {
+        zeigeMeldung('❌ Pipe nicht erreichbar — laeuft die VBSB-App? '
+          + '(127.0.0.1:8765)', '#ff9f9f');
+        return;
+      }
+      btn.textContent = 'erneut messen';
+      if (r.n) {
+        zeigeMeldung('✅ ' + r.n + ' Quoten gesendet (' + sport + ') — jetzt im '
+          + 'Buchmacher-Dialog „Direkt" → bet365 scannen. Bericht im Log.', '#7ee787');
+      } else {
+        // KEIN stiller Ausstieg: die Ausfaelle stehen im Log UND hier.
+        zeigeMeldung('Keine lesbaren Quoten — Grund: '
+          + b365GruendeKurz(leser && leser.gruende) + '. Bericht im Log.', '#ffd479');
+      }
+    });
+  });
+
+  box.appendChild(wahl);
+  box.appendChild(btn);
+  box.appendChild(status);
+  document.body.appendChild(box);
+}
+
+// ---------- Installation (document-start) ----------
+//
+// Muss laufen, BEVOR die Seite ihre Requests startet — `@run-at` ist
+// `document-start` und die Datei sitzt in der sofort ausgefuehrten IIFE. Die
+// Zeile steht bewusst am DATEIENDE: `B365_BUS_AUFRUFE` ist eine `const`, ein
+// Aufruf davor liefe in die TDZ — der try/catch wuerde den Fehler schlucken
+// und der Bus-Mitschnitt waere still weg (genau die Klasse Fehler, die diese
+// Datei messen soll). In Node (Tests) gibt es kein Fenster -> der Aufruf
+// tut nichts.
+try { b365Mitschnitt(b365Fenster(), B365_EREIGNISSE); } catch (e) { /* s. o. */ }
   const LEAGUES = { 1728:'COMP:129', 2476:'COMP:12202373', 2333:'COMP:11068551',
     2331:'COMP:12209546', 1913:'COMP:23', 2024:'COMP:45', 2374:'COMP:97',
     6633:'COMP:403085', 1792:'COMP:10479956', 2517:'COMP:133', 2395:'COMP:4905',
@@ -15293,6 +16378,18 @@ for (const cp of crossPairs2) {
     else ensureHook();
   }
 
+  // v9.12.0: bet365 — nur der MESS-Knopf (PoC). Die Seite ist Cloudflare-
+  // geschuetzt (HTTP-Client und headless-Chromium bekommen 403); mit dem
+  // echten Chrome laedt sie und zeigt Quoten im DOM. Bevor daraus ein
+  // Provider wird, muss bekannt sein, WIE sie ihre Daten haelt — der Hook
+  // sammelt das auf Klick und schickt es an die Pipe. Deshalb: kein Panel,
+  // kein Auto-Loop, kein /cmd-Poll (wie bei bet-at-home).
+  if (IS_BET365) {
+    const ensureMess = () => { if (!document.getElementById('vbsb-bet365')) bet365_messung_knopf(); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ensureMess);
+    else ensureMess();
+  }
+
   // ---------- Pruefungs-Modul: Pipe-Befehle aus der VBSB-GUI ausfuehren ----------
   // Die GUI schreibt per POST /cmd einen Pruefauftrag (Tool + Parameter) in die
   // Pipe-Warteschlange. Dieses Script pollt GET /cmd, fuehrt den passenden
@@ -15355,7 +16452,7 @@ for (const cp of crossPairs2) {
 // CMD_SITE sonst 'pin' und der Tab meldete sich als Pinnacle-Tab. Die
 // Buchmacher-Domain ist Quell-Seite, kein Ziel: CMD_SITE ist '' und der
 // Poller (cmdPoll) startet dort gar nicht (Aufrufe unten sind Wächter).
-const CMD_SITE = IS_BETATHOME ? '' : (IS_BETFAIR ? 'bf' : 'pin');
+const CMD_SITE = IS_QUELLE ? '' : (IS_BETFAIR ? 'bf' : 'pin');
   function cmdPoll() {
     if (typeof GM_xmlhttpRequest === 'undefined' || cmdBusy) {
       console.log('[Pruefung] Poll uebersprungen: ' +
@@ -15367,27 +16464,27 @@ const CMD_SITE = IS_BETATHOME ? '' : (IS_BETFAIR ? 'bf' : 'pin');
       onload: r => {
         console.log('[Pruefung] GET /cmd -> status ' + r.status);
         // 204 = kein Auftrag in der Haltezeit -> sofort weiterpollt
-        if (!(r.status >= 200 && r.status < 300) || r.status === 204) { if (!IS_BETATHOME) cmdPoll(); return; }
+        if (!(r.status >= 200 && r.status < 300) || r.status === 204) { if (!IS_QUELLE) cmdPoll(); return; }
         let cmd = null;
         try { cmd = JSON.parse(r.responseText); } catch (e) { cmdPoll(); return; }
         if (!cmd || !cmd.id || !cmd.tool) { cmdPoll(); return; }
         console.log('[Pruefung] Auftrag erhalten: id=' + cmd.id + ' tool=' + cmd.tool);
         cmdBusy = true;
         runCmd(cmd).then(() => { cmdBusy = false; cmdPoll(); })
-          .catch(() => { cmdBusy = false; if (!IS_BETATHOME) cmdPoll(); });
+          .catch(() => { cmdBusy = false; if (!IS_QUELLE) cmdPoll(); });
       },
       onerror: e => {
         console.log('[Pruefung] GET /cmd Fehler: ' + e);
         // Pipe kurz nicht erreichbar (Start/Neustart) -> mit Pause erneut
-        if (!IS_BETATHOME) setTimeout(() => cmdPoll(), 2000);
+        if (!IS_QUELLE) setTimeout(() => cmdPoll(), 2000);
     },
-    ontimeout: () => { if (!IS_BETATHOME) cmdPoll(); }  // Haltezeit ueberschritten -> sofort weiter
+    ontimeout: () => { if (!IS_QUELLE) cmdPoll(); }  // Haltezeit ueberschritten -> sofort weiter
     });
   }
-  // v9.9.39: Auf der Buchmacher-Domain kein /cmd-Long-Poll — der Tab ist
-  // kein Ziel-Tab und soll keinen Auftrag beanspruchen. Nur der Klick auf
-  // den Hook-Knopf (hook_betathome.js) loest hier etwas aus.
-  if (!IS_BETATHOME) {
+  // v9.9.39/v9.12.0: Auf einer Buchmacher-Domain (bet-at-home, bet365) kein
+  // /cmd-Long-Poll — der Tab ist kein Ziel-Tab und soll keinen Auftrag
+  // beanspruchen. Nur der Klick auf den Hook-Knopf loest hier etwas aus.
+  if (!IS_QUELLE) {
     cmdPoll();
     // Zusaetzlicher Weckruf bei Tab-Rueckkehr (deckt auch den Fehler-Pfad ab,
     // dessen 2s-Pause in versteckten Tabs gedehnt werden kann).

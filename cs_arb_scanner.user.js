@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.15.0
+// @version      9.15.8
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan). Auf bet365 (v9.12.0) ein Klick-Knopf fuer einen Mess-Bericht — er schreibt KEINE Quoten.
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -66,6 +66,20 @@
   // Nur wenn der BF-Lay unter dem PIN-Back liegt, kann ein Back-Lay-Arb
   // entstehen (sonst gibt es nie eine Marge).
   function arbDir(back, lay) { return isEchteQuote(back) && lay > 0 && lay < back; }
+
+  // Set-Betting-Runner eines Lauf-Markts (v9.15.6): `api_bf.js` baut die
+  // Runner als `{name, s20, s21, s30, s31, s32}` und laesst nicht vorhandene
+  // Laengen **weg** — Grand-Slam-Maerkte (bo5) tragen 3-0/3-1/3-2, aber kein
+  // 2-0. `setLay(runner, 's20')` liefert den Runner dieser Laenge oder null;
+  // ein direkter Zugriff (`runner.s20.lay`) warf live „Cannot read properties
+  // of undefined (reading 'lay')" (05./07.10.2026 9x, 12.10.2026 05:29:08 im
+  // Nutzerskript-Log) und riss den ganzen Liga-Scan mit (`ui.js` zaehlt den
+  // Fehler und macht mit der naechsten Liga weiter). Der why-Pull in
+  // `tools.js` prueft dieselbe Stelle seit jeher (`p && p.s20 && …`).
+  function setLay(runner, feld) {
+    const r = runner && runner[feld];
+    return r && r.lay > 0 ? r : null;
+  }
 
   // Quote-Carrier-Regel (v9.11.5): Ist das Paar (PIN-Back, BF-Lay) als
   // ZEILE plausibel — unabhaengig davon, ob es GERADE in Arb-Richtung liegt?
@@ -439,6 +453,7 @@
     "america mineiro": "america mg",
     amsterdamsche: "afc amsterdam",
     "antigua and barbuda falcons": "antigua barbuda falcs",
+    "anyang jungkwanjang red boosters": "anyang jungkwanjang red booste",
     "aps bomet": "adm police service bomet",
     "arema fc": "arema cronus",
     "arzignano valchiampo": "arzignanochiampo",
@@ -469,6 +484,7 @@
     "boston united": "boston utd",
     "bu yunchaokete": "yu bu",
     "bukovyna chernivtsi": "fc bukovyna",
+    "bursa yildirimspor": "bursa yildirim spor",
     "busan transportation corporation": "busan transportation corp",
     "bw linz": "fc blau weiss linz",
     "cambuur leeuwaarden": "cambuur leeuwarden",
@@ -553,11 +569,13 @@
     "iwaki fc": "iwaki sc",
     "jagiellonia bialystok": "jagiellonia bialystock",
     "jeju sk": "jeju utd",
+    "jezero plav": "fk jezero",
     "joe o connor": "joe oconnor",
     "juventus next gen": "juventus b",
     "kagoshima united": "kagoshima utd",
     "kaisar kyzylorda": "fk kaisar",
     "kansas city current": "kansas city w",
+    "karakopru belediye spor": "karakopru belediyespor",
     karlsruher: "karlsruhe",
     "kauno zalgiris ii": "fk kauno zalgiris 2",
     "kendal tornado": "tornado fc",
@@ -713,7 +731,8 @@
     ypsonas: "digenis ypsona",
     "yscc yokohama": "yokohama scc",
     zalaegerszegi: "zalaegerszeg",
-    "zhetysu taldykorgan": "fc zhetysu"
+    "zhetysu taldykorgan": "fc zhetysu",
+    "zonguldak komurspor": "zonguldakspor"
   };
   // __SYNONYMS_SIDEALIAS_END__
   // CPL (Cricket): PIN "St. Kitts and Nevis Patriots" / "Barbados Royals" vs
@@ -13603,7 +13622,13 @@ for (const cp of crossPairs2) {
         let i = -1;
         if (mScore(h.teams[0], { nm: p.name }) > 0) i = 0;
         else if (mScore(h.teams[1], { nm: p.name }) > 0) i = 1;
-        if (i >= 0 && !layByTeam[i] && h.back2 && h.back2[i] && p.s20.lay) layByTeam[i] = p;
+        // v9.15.6: `p.s20` kann **fehlen** (bo5-Maerkte tragen 3-0/3-1/3-2,
+        // kein 2-0) — `setLay` ist die eine Stelle, die das prueft
+        // (matching.js, Regel + Live-Beleg dort). Ohne sie warf der direkte
+        // Zugriff „Cannot read properties of undefined (reading 'lay')" und
+        // riss den ganzen Liga-Scan mit.
+        if (i >= 0 && !layByTeam[i] && h.back2 && h.back2[i] &&
+          setLay(p, 's20')) layByTeam[i] = p;
       }
       for (const i of [0, 1]) {
         const s = layByTeam[i];

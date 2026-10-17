@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.15.8
+// @version      9.18.5
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan). Auf bet365 (v9.12.0) ein Klick-Knopf fuer einen Mess-Bericht — er schreibt KEINE Quoten.
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -453,7 +453,7 @@
     "america mineiro": "america mg",
     amsterdamsche: "afc amsterdam",
     "antigua and barbuda falcons": "antigua barbuda falcs",
-    "anyang jungkwanjang red boosters": "anyang jungkwanjang red booste",
+    "anyang jungkwanjang red boosters": "anyang jungkwanjang red boost",
     "aps bomet": "adm police service bomet",
     "arema fc": "arema cronus",
     "arzignano valchiampo": "arzignanochiampo",
@@ -508,6 +508,7 @@
     "deportivo maipu": "cd maipu",
     "deportivo toluca": "toluca w",
     "difaa el jadida": "dhj el jadida",
+    "dimona sport club": "sc dimona",
     "dinamo bucuresti": "dinamo bucharest",
     "dubai city": "city fc",
     "dubai united": "united fc",
@@ -524,6 +525,7 @@
     "entebbe uppc": "entebbe fc",
     erzurumspor: "erzurum bb",
     "escorpiones belen": "escorpiones fc",
+    "ethnikos achna": "ethnikos achnas",
     "fa siauliai": "fk siauliai",
     "fc bacau": "acs bacau",
     "fc barcelona": "barcelona w",
@@ -550,6 +552,7 @@
     "hantharwady united": "hanthawaddy united fc",
     "hapoel galil elion": "hapoel galil elyon",
     "hapoel kfar shalem": "hapoel kfar shelem",
+    "hapoel nir ramat hasharon": "ironi ramat hasharon",
     "hearts ii": "hearts b",
     "hegelmann ii": "hegelmann litauen b",
     "hertha bsc": "hertha berlin",
@@ -689,6 +692,7 @@
     "sutjeska niksic": "fk sutjeska",
     "sutton united": "sutton utd",
     "swansea city": "swansea u21",
+    "szolnoki olaj": "szolnoki olajbanyasz kk",
     "talleres de remedios": "talleres re",
     "tauras taurage": "fk tauras",
     "tauro ii": "tauro fc res",
@@ -1104,6 +1108,12 @@
     // or More", "Player To Score a Hat-trick?" und "Player First Goalscorer" sind
     // andere Maerkte und duerfen nie in diesen Kanal.
     if (/^player to score$/i.test(n)) tags.add('pts');
+    // First Goalscorer („1. Torschuetze", Soccer, v9.17.2): EIGENER Kanal.
+    // Der anytime-Markt „Player To Score" ist eine andere Wette mit anderem
+    // Preis — beide liegen live nebeneinander (probematch-Dump v8.8.0:
+    // „Player To Score" UND „Player First Goalscorer"). Runner = Spielernamen,
+    // wie dort; die Abgrenzung bleibt: NUR der exakte Markt.
+    if (/^(player )?first goalscorer$/i.test(n)) tags.add('fgs');
     return tags;
   }
 
@@ -2700,6 +2710,7 @@
       const isOe = tags.has('oe');
       const isHtCs = tags.has('htcs');
       const isPts = tags.has('pts');
+      const isFgs = tags.has('fgs');
       const isTtot = tags.has('ttot');
       const isEuh = tags.has('euh');
       const mklive = !!((mk.state || {}).inplay);
@@ -2725,6 +2736,8 @@
       let resouDbg = false;
       const ptsLays = {};
       let ptsDbg = false;
+      const fgsLays = {};
+      let fgsDbg = false;
       const teamTotLines = {};
       let teamTotDbg = false;
       const euhRunners = [];
@@ -2759,11 +2772,29 @@
             ' lay=' + (r.exchange && r.exchange.availableToLay && r.exchange.availableToLay[0]
               ? r.exchange.availableToLay[0].price : '-')).join(' | '));
       }
+      if (isFgs && !fgsDbg) {
+        // 1. Torschuetze (v9.17.2): kompletter Runner-Dump des ersten
+        // First-Goalscorer-Markts je Liga — zeigt auch Runner ohne Lay.
+        // Bewusst KEIN DEBUG-Praefix (das Debug-Gating wuerde die Zeile im
+        // Produktions-Scan ausfiltern), wie beim pts-Dump.
+        fgsDbg = true;
+        log('  BF FGS-Runner[' + comp + '] Markt="' + mktName[mk.marketId] + '": ' +
+          (mk.runners || []).map(r => ((r.description && r.description.runnerName) || '') +
+            ' lay=' + (r.exchange && r.exchange.availableToLay && r.exchange.availableToLay[0]
+              ? r.exchange.availableToLay[0].price : '-')).join(' | '));
+      }
       (mk.runners || []).forEach(rn => {
         const nm = (rn.description && rn.description.runnerName) || '';
         const l = rn.exchange && rn.exchange.availableToLay && rn.exchange.availableToLay[0];
         const bk = rn.exchange && rn.exchange.availableToBack && rn.exchange.availableToBack[0];
         if (!l || l.price >= 200) return;
+        if (isFgs) {
+          // 1. Torschuetze: Runner = Spielername (z.B. "Erling Haaland").
+          // Betfair fuehrt fuer diesen Markt nur den Lay — ein PIN-Pendant
+          // gibt es nicht, deshalb wird kein Back gesammelt.
+          if (nm) fgsLays[nm.trim()] = { lay: l.price, vol: l.size };
+          return;
+        }
         if (isPts) {
           // Torschuetze: Runner = Spielername (z.B. "Kai Havertz"). Lay ist die
           // Back-Lay-Seite gegen PIN "X To Score" Yes. "No Goalscorer" o.ae.
@@ -3063,6 +3094,10 @@
       }
       if (isPts && Object.keys(ptsLays).length) {
         rows.push({ name: evn, kind: 'pts', pts: ptsLays, marketId: mk.marketId,
+          live: mklive });
+      }
+      if (isFgs && Object.keys(fgsLays).length) {
+        rows.push({ name: evn, kind: 'fgs', fgs: fgsLays, marketId: mk.marketId,
           live: mklive });
       }
       for (const line of Object.keys(totLines)) {
@@ -3671,6 +3706,119 @@
       },
       onerror: requeue, ontimeout: requeue
     });
+  }
+
+  // ---------- Renderer-Zaehler (Speicher-Befund 13.10.2026, v9.16.0) ----------
+  // MESSCHRITT, kein Fix. Der Chrome-Renderer des BF-Tabs wuchs im Nutzerlauf
+  // gemessen 679–2479 MB/h (1433 `Neustart-Zyklus`-Zeilen im Log), aber WORAN
+  // das haengt, war nicht messbar: waechst der **DOM** der Betfair-Seite (SPA,
+  // die Markt-Raster dauernd neu rendert) oder der **JS-Heap** des Scans (die
+  // Objekte, die matching/scan je Lauf anfassen)? Ohne diese Zuordnung waere
+  // jeder Fix geraten — die Lehre aus v9.11.16 („erst messen, ob der Weg live
+  // ueberhaupt greift").
+  //
+  // Die Zeile laeuft je Scan ueber die vorhandene logPipe-Leitung und landet
+  // damit in `data/scan_logs/scan_<tag>.log` — im selben Ordner wie die
+  // Python-Messwerte (`data/api_calls.log`, Abschnitt „Speicher“ in
+  // `scripts/scan_report.py`), sodass beide Reihen gegen dieselbe Uhr laufen.
+  //
+  // Schalter: localStorage `vbsb_csarb_memz` = '1' (Dev-Tab -> Tool
+  // `memzaehler`). Default AUS: die Zaehlung selbst ist billig (in echtem
+  // Chromium gemessen 13.10.2026: 0,0–0,1 ms bei 12 537 Knoten und ebenfalls
+  // unter der Messaufloesung bei 72 538), aber im Dauerbetrieb hat sie keinen
+  // Nutzen — sie ist ein Messschritt, keine Betriebsaufgabe.
+  const MEMZ_KEY = 'vbsb_csarb_memz';
+  // Laufender Stand: `nr` numeriert die Scans (Trend je Scan, nicht je Log-Tag),
+  // `start` ist nur der Rueckfall, wenn `performance.now()` fehlt.
+  const memzStand = { start: 0, nr: 0 };
+  const memZaehlerAn = () => {
+    try { return localStorage.getItem(MEMZ_KEY) === '1'; } catch (e) { return false; }
+  };
+  // Ist-Zahlen holen. JEDER Wert einzeln in try/catch: `performance.memory`
+  // gibt es nur in Chromium (Firefox/Safari: undefined), `document` fehlt in
+  // einem Nicht-Browser-Kontext. Was fehlt, bleibt -1 und die Zeile sagt das —
+  // eine 0 waere eine Luege („DOM leer“), und der Messschritt waere still
+  // wertlos (dieselbe Regel wie „kein Ausstieg ohne Log-Zeile“, v9.11.16).
+  function memZaehlerWerte(tabellenZeilen) {
+    const w = { knoten: -1, tabellenZeilen: -1, heapBytes: -1, limitBytes: -1,
+                nr: -1, seitAufbauMin: -1 };
+    try { w.knoten = document.getElementsByTagName('*').length; } catch (e) { /* nicht messbar */ }
+    // Zeilen der Ergebnisliste: der Aufrufer kennt sein Panel, sonst holt sie
+    // die Id des Panel-Ausgabebereichs (`vbsb-panel-out`, ui.js) — dann ist der
+    // Dev-Tab-Aufruf genauso aussagekraeftig wie die Scan-Zeile.
+    try {
+      const dir = Number(tabellenZeilen);
+      if (isFinite(dir) && dir >= 0) w.tabellenZeilen = dir;
+      else {
+        const box = document.getElementById('vbsb-panel-out');
+        if (box) w.tabellenZeilen = box.children.length;
+      }
+    } catch (e) { /* nicht messbar */ }
+    let seitMs = null;
+    try {
+      if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+        const t = performance.now();
+        // Nur echte Zahlen uebernehmen: ein Nicht-Wert darf nicht als NaN in
+        // die Zeile laufen (dann faellt sie auf Date.now() zurueck).
+        if (typeof t === 'number' && isFinite(t)) seitMs = t;
+      }
+    } catch (e) { /* nicht messbar */ }
+    try {
+      const m = (typeof performance !== 'undefined') ? performance.memory : null;
+      if (m && typeof m.usedJSHeapSize === 'number') {
+        w.heapBytes = m.usedJSHeapSize;
+        if (typeof m.jsHeapSizeLimit === 'number') w.limitBytes = m.jsHeapSizeLimit;
+      }
+    } catch (e) { /* performance.memory fehlt (kein Chromium) */ }
+    const now = Date.now();
+    memzStand.nr += 1;
+    w.nr = memzStand.nr;
+    if (seitMs === null) {
+      if (!memzStand.start) memzStand.start = now;
+      seitMs = now - memzStand.start;
+    }
+    w.seitAufbauMin = seitMs / 60000;
+    return w;
+  }
+  // Die Zeile ist **rein** (kein DOM, keine Uhr, kein localStorage) — genau
+  // deshalb ist sie in Node pruefbar (test/monitor.test.js). Feldformat
+  // `Name=Wert`, Abschnitte per ` | `, Zahlen mit Punkt als Dezimaltrenner: die
+  // Zeile wird maschinell gelesen (Muster `parse_memory_verlauf`), nicht
+  // vorgelesen. Fehlende Werte stehen als „nicht messbar“ mit Grund dar.
+  function memZaehlerZeile(w) {
+    if (!w || typeof w !== 'object') return null;
+    const zahl = v => (typeof v === 'number' && isFinite(v) && v >= 0) ? Math.round(v) : null;
+    const mb = b => (b / 1048576).toFixed(1);
+    const teile = [];
+    const knoten = zahl(w.knoten);
+    teile.push('DOM-Knoten=' + (knoten === null ? 'nicht messbar' : knoten));
+    const zeilen = zahl(w.tabellenZeilen);
+    teile.push('Tabelle=' + (zeilen === null
+      ? 'nicht messbar (kein Panel-Ausgabebereich)' : zeilen + ' Zeilen'));
+    const heap = zahl(w.heapBytes);
+    if (heap === null) teile.push('JS-Heap=nicht messbar (performance.memory fehlt)');
+    else {
+      const limit = zahl(w.limitBytes);
+      teile.push('JS-Heap=' + mb(heap) + 'MB' +
+        (limit === null ? '' : ' von ' + mb(limit) + 'MB'));
+    }
+    const nr = zahl(w.nr);
+    if (nr !== null && nr > 0) teile.push('Scan#' + nr);
+    const seit = (typeof w.seitAufbauMin === 'number' && isFinite(w.seitAufbauMin) &&
+      w.seitAufbauMin >= 0) ? w.seitAufbauMin.toFixed(1) : null;
+    if (seit !== null) teile.push('seit Aufbau=' + seit + 'min');
+    return 'MEMZ Renderer: ' + teile.join(' | ');
+  }
+  // Stand JETZT als fertige Zeile — der Aufrufer schickt sie ueber sein eigenes
+  // log()/logPipe() (EIN Sendeweg, sonst stuende die Zeile zweimal im Log).
+  // Ohne Schalter `null` (nichts messen, nichts senden).
+  function memZaehlerZeileJetzt(tabellenZeilen) {
+    if (!memZaehlerAn()) return null;
+    let zeile = null;
+    try { zeile = memZaehlerZeile(memZaehlerWerte(tabellenZeilen)); }
+    catch (e) { zeile = 'MEMZ Renderer: nicht messbar (Messung fehlgeschlagen: ' +
+      ((e && e.message) || e) + ')'; }
+    return zeile || 'MEMZ Renderer: nicht messbar (Messung fehlgeschlagen)';
   }
 // ---------- Bet-at-home: Store-Leser (Hook-Quelle) ----------
 //
@@ -4977,9 +5125,21 @@ function b365Mitschnitt(win, speicher) {
     }
     if (win.WebSocket && !win.WebSocket.__b365) {
       const Alt = win.WebSocket;
-      const Neu = function (url) {
-        try { b365Merke('socket', 'ws', url, speicher); } catch (e) { /* s. o. */ }
-        return new Alt(url);
+      // **ALLE Argumente weiterreichen (v9.18.4).** Der Wrapper nahm nur die
+      // URL entgegen — und genau das hat live eine Fremdseite lahmgelegt:
+      // bet-at-home baut seinen Datensocket mit ZWEI Argumenten auf,
+      // `wss://sportsapi.bet-at-home.de/v2` plus Subprotokoll
+      // `['wamp.2.json']` (gemessen 16.10.2026). Ohne Subprotokoll kommt der
+      // WAMP-Kanal nicht zustande und mit ihm faellt die ganze Seite aus
+      // (Suche, Turnierdaten). Sichtbar wurde es als „jede Suche laeuft in
+      // den 8-s-Timeout“: 17 Ligen in 8,9 min, 60 Fehlversuche, kein Treffer.
+      // Ein Mitschnitt darf die Seite NIE veraendern — hier war es ein
+      // weggelassenes Argument, nicht die Protokollierung.
+      const Neu = function () {
+        const args = Array.prototype.slice.call(arguments);
+        try { b365Merke('socket', 'ws', args[0], speicher); }
+        catch (e) { /* s. o. */ }
+        return new Alt(...args);
       };
       Neu.prototype = Alt.prototype;
       Neu.__b365 = true;
@@ -5109,6 +5269,16 @@ function bet365_messung_knopf() {
   document.body.appendChild(box);
 }
 
+// Ist das die Seite, fuer die der Mitschnitt gebaut ist? Der Hook misst
+// bet365; `IS_BET365` kommt aus config.js (EINE Quelle fuer die
+// Domain-Regel, kein zweites Muster). In den Node-Tests gibt es config.js
+// nicht — dort ist der Aufruf ohnehin wirkungslos (`b365Fenster()` hat kein
+// Fenster), deshalb ist „unbekannt“ hier gleichbedeutend mit „nicht messen“.
+function b365IstZielseite() {
+  try { return typeof IS_BET365 === 'undefined' ? false : !!IS_BET365; }
+  catch (e) { return false; }
+}
+
 // ---------- Installation (document-start) ----------
 //
 // Muss laufen, BEVOR die Seite ihre Requests startet — `@run-at` ist
@@ -5118,7 +5288,17 @@ function bet365_messung_knopf() {
 // und der Bus-Mitschnitt waere still weg (genau die Klasse Fehler, die diese
 // Datei messen soll). In Node (Tests) gibt es kein Fenster -> der Aufruf
 // tut nichts.
-try { b365Mitschnitt(b365Fenster(), B365_EREIGNISSE); } catch (e) { /* s. o. */ }
+//
+// **Und nur auf der Zielseite** (v9.18.4): `@match` fasst auch Betfair,
+// Pinnacle und bet-at-home, der Mitschnitt ist aber fuer bet365 gebaut — ein
+// Datenweg-Mitschnitt auf einer Fremdseite hat keinen Nutzen, kostet aber
+// genau das Risiko, das am 16.10.2026 eingetreten ist (der WebSocket-Wrapper
+// liess das WAMP-Subprotokoll fallen und legte die bet-at-home-Seite lahm).
+// Der Knopf wird in ui.js laengst so eingeschraenkt (`if (IS_BET365)`) — hier
+// fehlte derselbe Waechter.
+if (b365IstZielseite()) {
+  try { b365Mitschnitt(b365Fenster(), B365_EREIGNISSE); } catch (e) { /* s. o. */ }
+}
   const LEAGUES = { 1728:'COMP:129', 2476:'COMP:12202373', 2333:'COMP:11068551',
     2331:'COMP:12209546', 1913:'COMP:23', 2024:'COMP:45', 2374:'COMP:97',
     6633:'COMP:403085', 1792:'COMP:10479956', 2517:'COMP:133', 2395:'COMP:4905',
@@ -11408,6 +11588,31 @@ if (!hit) continue;
     // ohne Userscript-Neustart anbieten zu koennen. `hidden` haelt den
     // Eintrag aus dem Panel-Dropdown und aus __tools() heraus — er ist nur
     // der Transportweg (__tools() bleibt die Konsolen-Sicht).
+    // v9.16.0: Schalter fuer den Renderer-Zaehler (Speicher-Befund 13.10.2026).
+    // Der Schalter liegt im localStorage des BF-Tabs (uebersteht einen
+    // Userscript-Reload), die MEMZ-Zeile JE SCAN schreibt der Scan-Abschluss in
+    // ui.js — EIN Sendeweg (sonst stuende die Zeile zweimal im Log). „jetzt
+    // messen" gibt den Stand sofort aus, damit der Schalter ohne Warten auf den
+    // naechsten Scan pruefbar ist.
+    { id: 'memzaehler', group: 'diagnose', label: 'Renderer-Zaehler (MEMZ)', desc: 'Schaltet die MEMZ-Zeile je Scan ein/aus (localStorage vbsb_csarb_memz): DOM-Knoten, Zeilen der Ergebnisliste, JS-Heap und Zeit seit Seitenaufbau. Erst diese Zuordnung trennt "DOM waechst" von "JS-Heap waechst" (Speicher-Befund 13.10.2026). AUS = keine Messung, kein Log.',
+      params: [
+        { k: 'an', label: 'an/aus', v: 'an', options: [{ v: 'an', label: 'an (messen)' }, { v: 'aus', label: 'aus' }] },
+        { k: 'jetzt', label: 'jetzt messen (1/0)', v: '1' }],
+      run: a => {
+        const an = String(a.an) !== 'aus';
+        try { localStorage.setItem(MEMZ_KEY, an ? '1' : '0'); }
+        catch (e) { return devlog('Renderer-Zaehler: localStorage nicht beschreibbar (' + ((e && e.message) || e) + ')'); }
+        devlog('Renderer-Zaehler ' + (an ? 'AN' : 'AUS') + ' (' + MEMZ_KEY + '=' + (an ? '1' : '0') + ')' +
+          (an ? ' — je Scan eine MEMZ-Zeile im Panel-Log und in data/scan_logs/.'
+              : ' — keine MEMZ-Zeile mehr.'));
+        if (!an) return 'Renderer-Zaehler aus.';
+        if (String(a.jetzt) === '0') return 'Renderer-Zaehler an (ohne Sofortmessung).';
+        // -1 = "kein Aufrufer-Panel": memZaehlerWerte() liest die Zeilen dann
+        // aus dem Panel-Ausgabebereich (`vbsb-panel-out`), sonst "nicht messbar".
+        const zeile = memZaehlerZeileJetzt(-1);
+        devlog(zeile);
+        return zeile;
+      } },
     { id: 'toollist', group: 'diagnose', hidden: true, label: 'Werkzeug-Liste (GUI)', desc: 'Liefert die registrierten Werkzeuge als Daten (id, Label, Gruppe, Parameter) an die App.',
       params: [],
       run: () => TOOLS.filter(t => !t.hidden).map(t => ({
@@ -11665,7 +11870,8 @@ if (!hit) continue;
     }
     if (!Object.keys(pin).length) return;
     const btts = [], ous = [], hfous = [], mo3s = [], mo3hs = [], ahs = [], hfs = [], w2ns = [], btsws = [], tts = [], euhs = [];
-    const dnbs = [], dcs = [], resous = [], oes = [], tqs = [], pts = [];
+    const dnbs = [], dcs = [], resous = [], oes = [], tqs = [], pts = [],
+      fgss = [];
     const mo3hDbg = {}, mo3Dbg = {}, hcsDbg = {};
     let oeNoH = false, oeNoSpec = 0;
     const findH = (nb, rawName) => {
@@ -11867,6 +12073,10 @@ if (!hit) continue;
         dcs.push({ h, b });
       } else if (b.kind === 'pts') {
         pts.push({ h, b });
+      } else if (b.kind === 'fgs') {
+        // 1. Torschuetze (v9.17.2): BF-Markt „Player First Goalscorer" — kein
+        // PIN-Pendant, deshalb kein tryBL/arbDir-Gate (reine BF-Quote).
+        fgss.push({ h, b });
       } else if (b.kind === 'euh') {
         euhs.push({ h, b });
       }
@@ -12040,6 +12250,29 @@ if (!hit) continue;
               ' (Spec ' + cand.sid + ')',
             lay: bbOk ? bf.back : 0, vol: bbOk ? bf.volB : 0 });
         }
+      }
+    }
+    // ---------- 1. Torschuetze (First Goalscorer, v9.17.2) ----------
+    // BF-Markt „Player First Goalscorer" (Runner = Spielername) — eine ANDERE
+    // Wette als der anytime-„Player To Score"-Kanal (`pts`): der ERSTE Treffer
+    // des Spiels. Pinnacle fuehrt diesen Markt nicht im Scan, deshalb gibt es
+    // hier KEINE Back-Lay-Kante, sondern nur den BF-Lay als Gegenquelle
+    // (gleiche Bauart wie die BF-Lay-only-`pts`-Zeile seit v8.70.1): der
+    // Buchmacher-Boost „1. Torschütze Erling Haaland" laesst sich damit per
+    // Lay auf denselben Spieler absichern. KEIN Arb-Richtungs-Gate — die
+    // Zeile wird immer gespeichert, sonst fehlte die Gegenquote genau dann,
+    // wenn der Boost kommt.
+    for (const { h, b } of fgss) {
+      const players = Object.entries(b.fgs || {});
+      if (!players.length) {
+        log('  FGS ' + b.name + ': keine Runner im First-Goalscorer-Markt');
+      }
+      for (const [player, bf] of players) {
+        if (!(bf.lay > 1.01 && bf.lay < 1000)) continue;
+        pushRow(rows, lid, { name: b.name, hit: h, b,
+          kind: 'fgs', back: 0,
+          src: 'FGS ' + player + ' (BF First Goalscorer)',
+          lay: bf.lay, vol: bf.vol });
       }
     }
     // ---------- BTSW (Both Teams To Score + Winner, kombinierter Ausgang) ----------
@@ -14026,7 +14259,8 @@ for (const cp of crossPairs2) {
     btwDY: 'BTTS+Winner D/Yes', btwDN: 'BTTS+Winner D/No',
     btwAY: 'BTTS+Winner A/Yes', btwAN: 'BTTS+Winner A/No',
     pts: 'Torschuetze To Score',
-    ptsBB: 'Torschuetze BB: PIN trifft nicht + BF trifft' };
+    ptsBB: 'Torschuetze BB: PIN trifft nicht + BF trifft',
+    fgs: '1. Torschuetze (BF First Goalscorer)' };
   const kindLabel = k => {
     const m = /^ou(\d{2,3})([OU])$/.exec(k);
     if (m) return 'O/U ' + (parseInt(m[1], 10) / 10) +
@@ -15334,6 +15568,10 @@ for (const cp of crossPairs2) {
       'padding:4px 10px;color:#9aa3b2;white-space:pre-wrap;max-height:52vh;min-height:220px;overflow:auto;');
     const out = el('div', undefined,
       'padding:4px 10px 8px;overflow:auto;min-height:180px;font:11px/1.5 Menlo,Consolas,monospace;');
+    // v9.16.0: Id fuer den Renderer-Zaehler — `memZaehlerWerte()` kann die
+    // Zeilen der Ergebnisliste damit auch ohne Aufrufer-Parameter finden (z.B.
+    // aus dem Dev-Tab heraus).
+    out.id = 'vbsb-panel-out';
     const btn = (t, fn) => { const b = el('button', t,
       'padding:5px 10px;background:#34507c;color:#fff;border:0;border-radius:4px;cursor:pointer;');
       b.onclick = fn; return b; };
@@ -15569,6 +15807,14 @@ for (const cp of crossPairs2) {
           cache_hits_bf: reqStats.bfCacheHit, cache_misses_bf: reqStats.bfCacheMiss
         });
       } catch (e) { /* Metrik darf den Scan-Abschluss nicht brechen */ }
+      // Renderer-Zaehler (v9.16.0, Speicher-Befund 13.10.2026): EINE MEMZ-Zeile
+      // je Scan — nur mit localStorage-Schalter `vbsb_csarb_memz` (Dev-Tab ->
+      // Tool „Renderer-Zaehler“). „Tabelle“ sind die Zeilen der Ergebnisliste
+      // dieses Panels, der DOM-Zaehler in `memZaehlerWerte()` meint die ganze
+      // Seite (das Panel selbst ist darin der kleinste Teil). Ohne Schalter
+      // passiert hier nichts: kein Log, keine Zaehlung.
+      const memz = memZaehlerZeileJetzt(out.children.length);
+      if (memz) log(memz);
       // LigaCheck-Zusammenfassung (nur wenn es Auffaelligkeiten gibt)
       if (leagueWatch.suppressed || leagueWatch.emptyComp || leagueWatch.noTeamMatch) {
         const parts = [];

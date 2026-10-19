@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.18.5
+// @version      9.19.19
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan). Auf bet365 (v9.12.0) ein Klick-Knopf fuer einen Mess-Bericht — er schreibt KEINE Quoten.
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -4246,7 +4246,25 @@ const B365_MAX_QUOTEN = 60;           // Beispiele im Bericht
 const B365_MAX_KLASSEN = 40;
 const B365_MAX_RASTER_PROBEN = 12;    // Struktur-Proben je Bericht
 const B365_MAX_RASTER_TEXTE = 24;     // Texten je Probe (Coupon-Kontext)
-const B365_ANKER_EBENEN = 4;          // gemessen: 4 Ebenen ueber der Quote liegt die Zeile
+const B365_ANKER_EBENEN = 4;          // alte Regel (Coupon): 4 Ebenen ueber der Quote
+// **Wie viele Quoten EINE Markt-Zeile traegt (v9.19.13).**
+//
+// Gemessen am 18.10.2026 auf `#/AS/B18/` (Basketball, echte Seite, DOM-Baum):
+//
+//   SPAN (Quote) → DIV (Auswahl) → DIV (Zelle) → **DIV.cpr-d (Markt-Zeile, 2
+//   Quoten)** → DIV.rgl-542d6e (EVENT-Block: 2 Teamnamen + Spread + Gesamt +
+//   Sieg = **6** Quoten) → … → DIV.cpr-c (WETTBEWERBS-Block, erste Zeile „NBA“)
+//
+// Die feste Tiefe 4 landete auf diesen Seiten also im EVENT-Block: 6 Quoten
+// zu 6-7 Texten („BOS Celtics“, „DET Pistons“, „+1.5“, „Ü 221.5“, …) — der
+// Leser verwarf **jede** Zeile mit Grund `paare`, und `kand=0` bei
+// `gruppen=30` war die Folge (Log 16:33: `#/AS/B18/ quoten=46 kand=0`).
+// Deshalb ist die Grenze jetzt die Zahl der Quoten: die Zeile ist der
+// HOECHSTE Vorfahr mit hoechstens 3 Quoten (2 = Zweiwege-Markt, 3 = 1X2).
+const B365_MARKT_QUOTEN = 3;
+// Ebenen ueber dem Anker, in denen der WETTBEWERBS-Kopf eines Spiel-Blocks
+// gesucht wird (der Kopf haengt hoeher als die Markt-Zeile).
+const B365_LIGA_EBENEN = 6;
 const B365_MAX_LESER_ZEILEN = 400;    // Zeilen je Klick begrenzen
 const B365_MAX_LESER_KANDIDATEN = 1200;
 
@@ -4369,6 +4387,23 @@ function b365SammleSockets(ereignisse) {
 // Zuordnung BEWEISBAR macht: Ahnkette + Texten je Quote und die Gruppierung
 // (wie viele Quoten teilen denselben Container). Der Bericht geht an
 // `POST /log`; ein Zeilen-Leser entsteht daraus in einem Zug.
+// Je Ahnen-Ebene Klasse + Text-Anfang (`parentElement`-Kette).
+// Die Sonde beantwortet EINE Frage: steht der Wettbewerb ueberhaupt im DOM
+// dieser Zeile — und wenn ja, wie viele Ebenen hoeher? (v9.19.6)
+function b365AhnenTexte(el, tiefe) {
+  const raus = [];
+  let n = el;
+  for (let i = 0; i < (tiefe || 8) && n; i++) {
+    raus.push({
+      klasse: (String(n.tagName || '?') + '.'
+        + String(n.className || '').slice(0, 40)),
+      text: String(n.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+    });
+    n = n.parentElement || null;
+  }
+  return raus;
+}
+
 function b365RasterStruktur(dok, maxProben) {
   const d = dok || {};
   const grenze = maxProben || B365_MAX_RASTER_PROBEN;
@@ -4407,6 +4442,11 @@ function b365RasterStruktur(dok, maxProben) {
     if (proben.length < grenze) {
       proben.push({ q: wert, kette,
         eltern_felder: !!(el.getAttribute && el.getAttribute('data-content')),
+        // v9.19.6: je Ebene der eigene Text-Anfang. Gemessen fehlt der
+        // Wettbewerb in der 1X2-Zeile selbst (nur zwei Teamnamen); ob er
+        // zwei, vier oder acht Ebenen hoeher steht, entscheidet die naechste
+        // Regel — geraten wird er nicht.
+        ahnen: b365AhnenTexte(el, 8),
         texte });
     }
   }
@@ -4493,8 +4533,12 @@ function b365LinienSchluessel(zahl) {
   return String(zehntel).padStart(2, '0');
 }
 
+// `ü` fehlte: bet365 schreibt die Gesamt-Linie als **„Ü 221.5“**, und nach
+// dem Kleinschreiben ist das ein „ü“ — ohne diesen Eintrag galt die Zeile
+// als Teamname und der Markt fiel aus (gemessen 18.10.2026, Basketball:
+// „Ü 221.51.81 U 221.51.95“).
 const B365_OU_RICHTUNG = {
-  o: 'O', over: 'O', 'über': 'O', ueber: 'O',
+  o: 'O', 'ü': 'O', over: 'O', 'über': 'O', ueber: 'O',
   u: 'U', under: 'U', unter: 'U',
 };
 const B365_BTTS_RICHTUNG = { ja: 'Y', yes: 'Y', nein: 'N', no: 'N' };
@@ -4509,6 +4553,12 @@ const B365_MARKT_WOERTER = ['money line', 'moneyline', 'sieger', 'gewinner',
   'match winner', '1x2', 'endstand', 'ergebnis', 'beide teams treffen',
   'both teams to score', 'ueber/unter', 'über/unter', 'over/under',
   'handicap', 'spread', 'gesamt', 'total'];
+
+// Datum/Uhrzeit sind kein Wettbewerb und kein Teamname („Di 20 Okt“, „21:00“,
+// „18.10.“). Gemessen 18.10.2026: die Tennis-Zeile traegt neben den zwei
+// Spielernamen auch „12:00“ und die Platz-Nummer „4“ — ohne diese Regel
+// wurden daraus vier „Teamnamen“ und die Zeile fiel mit `paare` aus.
+const B365_ZEIT_MUSTER = /^(mo|di|mi|do|fr|sa|so)\b|^\d{1,2}:\d{2}|^\d{1,2}\.\s*\d{1,2}\.?$/i;
 
 // Was IST dieses Label? Rein (kein DOM), eine Stelle fuer alle Faelle.
 // Rueckgabe: {art, richtung?, linie?} oder null (leer).
@@ -4525,13 +4575,13 @@ function b365LabelArt(label) {
   if (!roh) return null;
   const s = roh.toLowerCase().replace(/\s+/g, ' ');
   // 1. Uber/Unter, Linie im selben Text („o 48.5", „über 2,5")
-  let m = /^(o|u|over|under|über|unter|ueber)\s*([+-]?\d+(?:[.,]\d+)?)$/.exec(s);
+  let m = /^(o|u|ü|over|under|über|unter|ueber)\s*([+-]?\d+(?:[.,]\d+)?)$/.exec(s);
   if (m && B365_OU_RICHTUNG[m[1]]) {
     const linie = b365ZahlAusText(m[2]);
     if (linie) return { art: 'ou', richtung: B365_OU_RICHTUNG[m[1]], linie: linie.zahl };
   }
   // 2. … und die umgekehrte Reihenfolge („48.5 o", „2,5 über")
-  m = /^([+-]?\d+(?:[.,]\d+)?)\s*(o|u|over|under|über|unter|ueber)$/.exec(s);
+  m = /^([+-]?\d+(?:[.,]\d+)?)\s*(o|u|ü|over|under|über|unter|ueber)$/.exec(s);
   if (m && B365_OU_RICHTUNG[m[2]]) {
     const linie = b365ZahlAusText(m[1]);
     if (linie) return { art: 'ou', richtung: B365_OU_RICHTUNG[m[2]], linie: linie.zahl };
@@ -4551,7 +4601,9 @@ function b365LabelArt(label) {
   if (z) return { art: 'linie' };
   // 9. Markt-Ueberschrift
   if (B365_MARKT_WOERTER.indexOf(s) >= 0) return { art: 'markt' };
-  // 10. sonst: Teamname
+  // 10. Datum/Uhrzeit — weder Team noch Markt (gemessen: „12:00“).
+  if (B365_ZEIT_MUSTER.test(s)) return { art: 'zeit' };
+  // 11. sonst: Teamname
   return { art: 'team', text: roh };
 }
 
@@ -4562,9 +4614,24 @@ function b365LabelArt(label) {
 // Regelwerk im Userscript und bewusst KEIN Rueckfall auf Zweiwege fuer
 // diese drei: bei ihnen waere ein Zweiwege-ML ein ANDERER Markt
 // („ohne Unentschieden" bzw. „inkl. Verlaengerung") — geraten waere falsch.
+// Welche FORM hat der Spiel-Siegermarkt dieser Sportart?
+//
+// `bl` = zwei Ausgaenge (Heim/Aus), `h3` = drei (Heim/Unentschieden/Aus).
+// Die Zuordnung folgt der SPORT-Regel, nicht der Seite: **Basketball kennt
+// kein Unentschieden**, der Spiel-Sieg ist dort strukturell Zweiwege.
+//
+// v9.19.12: Basketball stand bis hierher auf `h3` — gemessen (18.10.2026,
+// Basketball-Bericht) traegt die Seite die Spiel-ML aber als Zweiwege-Reihe,
+// der Leser verwarf sie mit Grund `ml_form` und der Scan meldete „keine
+// Zeilen“, obwohl 90 Quoten gelesen waren. Eine 1X2-Reihe kann es im
+// Basketball gar nicht geben; bleibt sie aus, ist nichts verloren.
+// Eishockey bleibt bewusst `h3`: dort gibt es die 3-Weg-Wette nach 60 min
+// NEBEN der 2-Weg-ML — die Zuordnung ist nicht eindeutig, also wird nicht
+// geraten.
 function b365MlFamilie(sport) {
   const s = String(sport || '').toLowerCase();
-  if (s === 'tennis' || s === 'american-football' || s === 'darts') return 'bl';
+  if (s === 'tennis' || s === 'american-football' || s === 'darts'
+      || s === 'basketball') return 'bl';
   return 'h3';
 }
 
@@ -4572,6 +4639,34 @@ function b365MlFamilie(sport) {
 // `spiel` ist „Heim - Aus" (aus der Zeile oder ihrem Umfeld), `sport` die
 // gewaehlte Sportart. Rueckgabe: {kandidaten, gruende} — `gruende` zaehlt,
 // WARUM eine Zeile/Quote ausfaellt (geht in den Bericht, kein stiller Ausstieg).
+// **Dreiwege-Reihe: zwei Teamnamen + drei Quoten (v9.19.6).**
+//
+// Gemessen im Seitenbericht vom 18.10.2026 (10:50, `#/HO/`, Probe 1):
+// `texte: ["Bayer Leverkusen", "SC Freiburg", "1.60", "4.50", "5.00"]`,
+// `quoten: ["1.60", "4.50", "5.00"]`. Die Zeile traegt also **zwei** Namen und
+// **drei** Quoten — die 1X2-Reihe. Der Leser verlangte bis v9.19.6 gleiche
+// Anzahl (`i`-ter Text = `i`-te Quote) und verwarf damit **jede** Siegermarke
+// der Startseite: `paare=47` in genau diesem Bericht. Das ist der Grund, warum
+// bet365 trotz 125 gelesener Quoten 0 Zeilen lieferte.
+//
+// Die Zuordnung ist die **Position** (bet365 zeigt Heim / X / Aus, in genau
+// dieser Reihenfolge): 1. Zahl = Heim, 2. = Unentschieden, 3. = Aus. Nur wenn
+// die Texte AUSSCHLIESSLICH zwei Teamnamen sind, gilt die Regel — ein
+// Markt-Kopf oder ein Handicap dazwischen faellt auf `paare` zurueck (nicht
+// raten). Die Marge prueft danach dieselbe Funktion wie bei jeder Zeile.
+function b365Dreiwege(texte, werte) {
+  if (!Array.isArray(texte) || !Array.isArray(werte)) return null;
+  if (werte.length !== 3) return null;
+  const namen = [];
+  const andere = [];
+  for (const t of texte) {
+    const a = b365LabelArt(t);
+    if (a && a.art === 'team') namen.push(a.text); else andere.push(t);
+  }
+  if (namen.length !== 2 || andere.length) return null;
+  return { heim: namen[0], aus: namen[1], quoten: werte.slice(0, 3) };
+}
+
 function b365ZeileKandidaten(labels, quoten, spiel, sport, league) {
   const raus = [];
   const gruende = {};
@@ -4579,7 +4674,20 @@ function b365ZeileKandidaten(labels, quoten, spiel, sport, league) {
   const texte = Array.isArray(labels) ? labels : [];
   const werte = Array.isArray(quoten) ? quoten : [];
   if (!texte.length || texte.length !== werte.length) {
-    plus('paare');
+    // v9.19.6: die 1X2-Reihe hat zwei Namen und drei Quoten — die Position
+    // ist dort die Zuordnung (s. `b365Dreiwege`). Ohne diese Regel faellt
+    // JEDE Siegermarke der Startseite aus (`paare=47`, Log 18.10.2026).
+    const drei = b365Dreiwege(texte, werte);
+    if (!drei) {
+      plus('paare');
+      return { kandidaten: raus, gruende };
+    }
+    return b365DreiwegeZeile(drei, spiel, sport, league, gruende);
+  }
+  // Ohne belegten Wettbewerb gibt es keine Zeile (v9.19.3): ein geratener
+  // Liga-Name macht aus einem NFL-Spiel eine Premier-League-Zeile.
+  if (!league) {
+    plus('wettbewerb');
     return { kandidaten: raus, gruende };
   }
   if (!spiel || spiel.indexOf(' - ') < 0) {
@@ -4698,6 +4806,44 @@ function b365ZeileKandidaten(labels, quoten, spiel, sport, league) {
   return { kandidaten: raus, gruende };
 }
 
+// Die 1X2-Reihe in Kandidaten uebersetzen (eigene Funktion, damit die
+// Reihenfolge und die Marge EINE Stelle haben — Heim/X/Aus).
+function b365DreiwegeZeile(drei, spiel, sport, league, gruende) {
+  const raus = [];
+  const plus = (g) => { gruende[g] = (gruende[g] || 0) + 1; };
+  if (!league) {
+    // Auch die beste 1X2-Reihe braucht einen belegten Wettbewerb: ohne ihn
+    // waere der Liga-Name geraten (v9.19.3).
+    plus('wettbewerb');
+    return { kandidaten: raus, gruende };
+  }
+  if (!spiel || spiel.indexOf(' - ') < 0) {
+    plus('spiel');
+    return { kandidaten: raus, gruende };
+  }
+  if (b365MlFamilie(sport) !== 'h3') {
+    // Zweiwege-Sportart (Tennis, American Football …): drei Ausgaenge sind
+    // ein ANDERER Markt — nicht senden, aber zaehlen.
+    plus('ml_form');
+    return { kandidaten: raus, gruende };
+  }
+  const seiten = ['A', 'D', 'B'];       // Heim / Unentschieden / Aus
+  const kandidaten = seiten.map((seite, i) => ({
+    kind: 'h3' + seite,
+    quote: String(drei.quoten[i]),
+    label: seite === 'A' ? drei.heim : (seite === 'B' ? drei.aus : 'Unentschieden'),
+    seite: seite === 'A' ? drei.heim : (seite === 'B' ? drei.aus : 'Unentschieden'),
+    art: 'ml',
+  }));
+  const summe = b365Summe(kandidaten.map(k => k.quote));
+  if (!b365SummePlausibel(summe)) {
+    plus('summe');
+    return { kandidaten: raus, gruende };
+  }
+  raus.push(...kandidaten);
+  return { kandidaten: raus, gruende };
+}
+
 // Summe der impliziten Wahrscheinlichkeiten (Buchmacher-Marge + 1).
 function b365Summe(quoten) {
   let s = 0;
@@ -4716,6 +4862,26 @@ function b365SummePlausibel(summe) {
 }
 
 // Text eines Elements (fuer die Kopf-Suche): innerText, sonst textContent.
+// Quote eines Blattes (Attribut `data-content` oder Text). EINE Stelle —
+// Leser und Struktur-Sonde benutzen dieselbe Definition.
+function b365QuoteVon(el) {
+  if (!el || !el.getAttribute) return null;
+  const ausAttr = el.getAttribute('data-content');
+  if (b365IstQuote(ausAttr)) return String(ausAttr).trim();
+  const t = String(el.textContent || '').trim();
+  return b365IstQuote(t) ? t : null;
+}
+
+// Traegt dieser Teilbaum eine Quote? (fuer „Block ohne Quoten“, rein lesend)
+function b365HatQuote(el) {
+  if (!el || typeof el.querySelectorAll !== 'function') return false;
+  for (const k of Array.prototype.slice.call(el.querySelectorAll('*'))) {
+    if (k.children && k.children.length) continue;
+    if (b365QuoteVon(k)) return true;
+  }
+  return false;
+}
+
 function b365TextVon(el) {
   if (!el) return '';
   if (typeof el.innerText === 'string' && el.innerText) return el.innerText;
@@ -4744,13 +4910,20 @@ function b365SpielKandidaten(text) {
 // „A - B"-Text traegt (Raster-Form: der jeweilige Markt ist eine eigene
 // Zeile, der Spielname steht im Kopf des Spiel-Blocks). Findet sich nichts,
 // bleibt der Name leer — die Zeile faellt dann mit Grund `spiel` aus.
-function b365SpielFuerZeile(anker, texte) {
-  const teams = [];
+function b365SpielFuerZeile(anker, texte, teams) {
+  const namen = [];
   for (const t of texte || []) {
     const a = b365LabelArt(t);
-    if (a && a.art === 'team') teams.push(a.text);
+    if (a && a.art === 'team') namen.push(a.text);
   }
-  if (teams.length === 2) return teams[0] + ' - ' + teams[1];
+  if (namen.length === 2) return namen[0] + ' - ' + namen[1];
+  // v9.19.13: die Sportart-Seiten tragen den Spielnamen NICHT als „A - B“ im
+  // innerText, sondern als zwei getrennte Blätter im Spiel-Block
+  // („BOS Celtics“ / „DET Pistons“). Der Block ist gemessen und wird beim
+  // Lesen einmal bestimmt (`b365TeamsFuerZeile`) — hier nur uebernehmen.
+  if (Array.isArray(teams) && teams.length === 2) {
+    return teams[0] + ' - ' + teams[1];
+  }
   let n = anker;
   for (let i = 0; i < 6 && n && n.parentElement; i++) {
     n = n.parentElement;
@@ -4758,6 +4931,146 @@ function b365SpielFuerZeile(anker, texte) {
     if (treffer.length === 1) return treffer[0];
   }
   return '';
+}
+
+// Wettbewerb fuer EINE Zeile: der naechste Block um die Zeile, der GENAU
+// EINEN der seitenweiten Kandidaten traegt.
+//
+// WARUM DAS NOETIG IST (Befund 18.10.2026): Bis v9.19.2 galt der haeufigste
+// Kandidat der GANZEN Seite fuer jede Zeile (`b365WettbewerbName`). Der
+// automatische Messweg oeffnet ohne bet365-Tab die Startseite (#/HO/); dort
+// stand „England - Premier League“ oben in den beworbenen Modulen, und 26
+// NFL-Spiele („WAS Commanders - SF 49ers“, `ou525…`) landeten als
+// **soccer**-Zeilen dieser englischen Liga in `odds_history`. Folge: der
+// Provider fand Zeilen (also keinen Grund zu melden), der Scan fand keinen
+// einzigen Treffer — und die GUI zeigte die geratene Ursachenliste, obwohl
+// die Daten nachweislich falsch waren (eine falsche Zeile ist so teuer wie
+// eine fehlende, v9.11.16).
+//
+// Deshalb gilt: der Wettbewerb muss zum Block der Zeile gehoeren. Die
+// seitenweiten Kandidaten sind dabei die **Whitelist** — ein Spielname steht
+// einmal auf der Seite und ist damit kein Kandidat (dieselbe Mehrfach-Regel
+// wie in `b365WettbewerbsKandidaten`). Traegt kein Block genau einen Namen,
+// bleibt die Zeile ohne Liga und faellt mit Grund `wettbewerb` aus: lieber
+// keine Zeile als eine geratene.
+// Zwei Teamnamen in EINEM Block? (rein lesend, ohne Klassen-Namen)
+//
+// Gemessen (18.10.2026, `#/AS/B18/`): der Spiel-Block eines Events ist das
+// erste Kind seines Event-Knotens und traegt **nur** die zwei Blaetter
+// „BOS Celtics“ / „DET Pistons“ — keine Quote, keine Zahl. Ein Markt-Block
+// (Spread, Gesamt) traegt Zahlen („+1.5“, „Ü 221.5“), ein Wettbewerbs-Kopf
+// („NBA“) nur eine Zeile. „Genau zwei Blaetter, beide Teamnamen“ ist damit
+// ein Beleg und keine Vermutung.
+function b365TeamPaar(el) {
+  if (!el || typeof el.querySelectorAll !== 'function') return [];
+  const namen = [];
+  for (const k of Array.prototype.slice.call(el.querySelectorAll('*'))) {
+    if (k.children && k.children.length) continue;
+    const t = String(k.textContent || '').trim();
+    if (!t || t.length >= 40) continue;
+    const a = b365LabelArt(t);
+    if (!a || a.art !== 'team') return [];   // Markt-/Kopf-Text ⇒ kein Team-Block
+    namen.push(a.text);
+    if (namen.length > 2) return [];
+  }
+  return namen.length === 2 ? namen : [];
+}
+
+// Der Spiel-Block ZUR Zeile: von der Markt-Zeile aufwaerts, in jedem Vorfahr
+// die direkten Kinder pruefen — das erste Kind ohne Quote, das genau zwei
+// Teamnamen traegt, ist der Spiel-Block (er steht im Dokument VOR den
+// Maerkten). Der Zweig, in dem die Zeile selbst haengt, wird uebersprungen.
+// Teamnamen IM Block selbst (gemessen 18.10.2026, Tennis-Zeile `#/AS/B13/`):
+// dort stehen die zwei Spielernamen in derselben Zeile wie die zwei Quoten
+// (plus Uhrzeit und Platz-Nummer). Genau zwei klassifizierte Teamnamen ⇒ die
+// Position ist die Zuordnung (erster = Heim). Alles andere bleibt leer.
+function b365TeamsImAnker(anker) {
+  if (!anker || typeof anker.querySelectorAll !== 'function') return [];
+  const namen = [];
+  for (const k of Array.prototype.slice.call(anker.querySelectorAll('*'))) {
+    if (k.children && k.children.length) continue;
+    const t = String(k.textContent || '').trim();
+    if (!t || t.length >= 40) continue;
+    const a = b365LabelArt(t);
+    if (!a || a.art !== 'team') continue;
+    namen.push(a.text);
+    if (namen.length > 2) return [];
+  }
+  return namen.length === 2 ? namen : [];
+}
+
+function b365TeamsFuerZeile(anker) {
+  let n = anker;
+  for (let i = 0; i < 4 && n; i++) {
+    for (const k of Array.prototype.slice.call(n.children || [])) {
+      if (b365IstNachfahre(anker, k)) continue;
+      if (b365HatQuote(k)) continue;
+      const paar = b365TeamPaar(k);
+      if (paar.length === 2) return paar;
+    }
+    n = n.parentElement || null;
+  }
+  return [];
+}
+
+// Wettbewerbs-Kopf einer Sportart-Seite (v9.19.13).
+//
+// WARUM es das braucht: `b365WettbewerbsKandidaten` verlangt die Form
+// „A - B“ und mindestens zwei Vorkommen — die Sportart-Seite schreibt den
+// Wettbewerb aber als EINE Zeile ueber der Spiel-Liste (gemessen 18.10.2026:
+// die erste Zeile des Wettbewerbs-Blocks ist „NBA“). Ohne Namen fiel jede
+// Zeile mit `wettbewerb` aus, obwohl 46 Quoten gelesen waren.
+//
+// Der Kopf wird strukturell bestimmt: erste innerText-Zeile des naechsten
+// Vorfahren, die KEINE Quote ist, NICHT die Teamnamen der Zeile nennt, kein
+// Datum/Uhrzeit ist und keine Markt-Ueberschrift — und der Vorfahr muss den
+// Spiel-Block enthalten (also die Zeile umfassen). Bleibt keine uebrig,
+// bleibt der Wettbewerb leer (dann faellt die Zeile aus — nicht raten).
+function b365KopfName(anker, teams, texte) {
+  const namen = Array.isArray(teams) ? teams : [];
+  const zeile = Array.isArray(texte) ? texte : [];
+  let n = anker;
+  for (let i = 0; i < B365_LIGA_EBENEN && n; i++) {
+    const zeilen = String(b365TextVon(n) || '').split('\n')
+      .map(z => z.trim()).filter(Boolean);
+    const kopf = zeilen.length ? zeilen[0] : '';
+    if (kopf && kopf.length >= 2 && kopf.length <= 40
+        && !b365IstQuote(kopf)
+        && namen.indexOf(kopf) < 0
+        // Auch die Texte der Zeile selbst sind kein Wettbewerb: gemessen
+        // 18.10.2026 (Tennis) ist die erste Zeile der Zeile der Spielername —
+        // der stand dann als `league` in jedem Kandidaten.
+        && zeile.indexOf(kopf) < 0
+        && !B365_ZEIT_MUSTER.test(kopf)
+        && B365_MARKT_WOERTER.indexOf(kopf.toLowerCase()) < 0
+        && !/\d{3,}/.test(kopf)
+        // Ein SPIELNAME ist kein Wettbewerb: die Form „A - B“ steht auf der
+        // Seite einmal je Spiel. Ohne diese Zeile wuerde der Kopf-Fallback
+        // „WAS Commanders - SF 49ers“ als Liga senden — genau die geratene
+        // Zeile, die v9.19.3 verboten hat.
+        && kopf.indexOf(' - ') < 0) {
+      return kopf;
+    }
+    n = n.parentElement || null;
+  }
+  return '';
+}
+
+function b365WettbewerbFuerZeile(anker, kandidaten, teams, texte) {
+  const namen = (kandidaten || [])
+    .map(k => (k && k.name) || '').filter(Boolean);
+  if (!namen.length) return b365KopfName(anker, teams, texte);
+  let n = anker;
+  for (let i = 0; i < B365_LIGA_EBENEN && n; i++) {
+    const imBlock = b365SpielKandidaten(b365TextVon(n))
+      .filter(t => namen.indexOf(t) >= 0);
+    if (imBlock.length === 1) return imBlock[0];
+    if (imBlock.length > 1) return '';   // gemischt — nicht raten
+    n = n.parentElement || null;
+  }
+  // Kein Block traegt einen Namen: nur eine SEITE mit genau einem Kandidaten
+  // ist ein Beleg (eine Liga-/Event-Seite), sonst bleibt die Zeile ohne Liga.
+  return namen.length === 1 ? namen[0] : '';
 }
 
 // Der Zeilen-Leser: das DOM rein lesen, keine Browser-API ausser
@@ -4768,18 +5081,37 @@ function b365SpielFuerZeile(anker, texte) {
 // belegt, was der Leser gesehen hat.
 function b365LeseZeilen(dok, sport, league) {
   const d = dok || {};
+  // v9.19.3: Der Wettbewerb wird NICHT mehr global gestempelt. Die
+  // seitenweiten Kandidaten sind die Whitelist je Zeile; nur eine Seite mit
+  // genau EINEM Kandidaten ist selbst ein Beleg (Liga-Seite). Ohne Kandidaten
+  // gilt der Name, den der Aufrufer mitgibt (er kommt von derselben Seite).
+  const seite = b365WettbewerbsKandidaten(d);
+  const seitenLiga = seite.length
+    ? (seite.length === 1 ? seite[0].name : '')
+    : String(league || '');
   const alle = (typeof d.querySelectorAll === 'function')
     ? Array.prototype.slice.call(d.querySelectorAll('*')) : [];
   const istBlatt = (el) => !(el.children && el.children.length);
-  const quoteVon = (el) => {
-    const ausAttr = el.getAttribute ? el.getAttribute('data-content') : null;
-    if (b365IstQuote(ausAttr)) return String(ausAttr).trim();
-    const t = String(el.textContent || '').trim();
-    return b365IstQuote(t) ? t : null;
-  };
+  const quoteVon = b365QuoteVon;
+  // Quoten je Knoten EINMAL zaehlen (ein Durchgang), damit die Zeilen-Grenze
+  // eine Zahl ist und keine geratene Tiefe: gemessen ist die Markt-Zeile der
+  // hoechste Vorfahr mit hoechstens `B365_MARKT_QUOTEN` Quoten (v9.19.13).
+  const zahl = new Map();
+  for (const el of alle) {
+    if (!istBlatt(el) || !quoteVon(el)) continue;
+    let n = el;
+    for (let i = 0; i < 10 && n; i++) {
+      zahl.set(n, (zahl.get(n) || 0) + 1);
+      n = n.parentElement || null;
+    }
+  }
   const ankerVon = (el) => {
     let a = el;
-    for (let i = 0; i < B365_ANKER_EBENEN && a.parentElement; i++) a = a.parentElement;
+    while (a.parentElement
+           && (zahl.get(a.parentElement) || 0) > 0
+           && (zahl.get(a.parentElement) || 0) <= B365_MARKT_QUOTEN) {
+      a = a.parentElement;
+    }
     return a;
   };
   // 1. Quoten sammeln und nach Anker gruppieren (ein Anker = eine Zeile).
@@ -4792,8 +5124,33 @@ function b365LeseZeilen(dok, sport, league) {
     if (!anker) continue;
     let g = null;
     for (const k of gruppen) { if (k.anker === anker) { g = k; break; } }
-    if (!g) { g = { anker: anker, quoten: [], texte: [] }; gruppen.push(g); }
-    if (g.quoten.length < 64) g.quoten.push(wert);
+    if (!g) { g = { anker: anker, quoten: [], texte: [], zellen: [] }; gruppen.push(g); }
+    if (g.quoten.length < 64) { g.quoten.push(wert); g.zellen.push(el); }
+  }
+  // Das Label einer Quote steht in ihrer AUSWAHL-ZELLE (gemessen 18.10.2026:
+  // `DIV` mit `SPAN.rgl-ec35f3` „+1.5“ + `SPAN.rgl-f8e95e` „1.81“). Deshalb
+  // wird es dort gelesen und NICHT aus dem ganzen Block gesammelt: auf den
+  // Sportart-Seiten liegen im selben Block auch Uhrzeit und Spielnummer
+  // (`12:00`, `4`), und die machten aus 2 Quoten + 4 Texten ein `paare`
+  // (live: `#/AS/B13/ quoten=57 kand=0 gruende={"paare": 29}`).
+  const zellLabel = (el, anker) => {
+    const zelle = el && el.parentElement;
+    // Nur eine ZELLE traegt EIN Label. Ist der Elternknoten die Zeile selbst
+    // (1X2-Reihe: alle Texte und Quoten liegen nebeneinander), ist die
+    // Position im Block die Zuordnung — dann hier nichts raten.
+    if (!zelle || zelle === anker) return '';
+    if ((zahl.get(zelle) || 0) !== 1) return '';
+    if (typeof zelle.querySelectorAll !== 'function') return '';
+    for (const k of Array.prototype.slice.call(zelle.querySelectorAll('*'))) {
+      if (k.children && k.children.length) continue;
+      if (quoteVon(k)) continue;
+      const t = String(k.textContent || '').trim();
+      if (t && t.length < 40) return t;
+    }
+    return '';
+  };
+  for (const g of gruppen) {
+    g.labels = g.zellen.map(el => zellLabel(el, g.anker));
   }
   // 2. Texte je Zeile: Blaetter IM Anker, die keine Quote sind. Bevorzugt
   //    `anker.querySelectorAll('*')` — genau der Weg, mit dem die Struktur
@@ -4813,6 +5170,27 @@ function b365LeseZeilen(dok, sport, league) {
       if (g.texte.length >= 64) break;
     }
   }
+  // 2b. Gehoert die SEITE ueberhaupt zur gewaehlten Sportart? (v9.19.7)
+  //
+  // Beleg ist die ausgewaehlte Sportart der Navigation (`b365SeitenSportart`).
+  // Ist sie ERKANNT und weicht ab, wird keine einzige Zeile gesendet: die
+  // Quoten einer Fußball-Startseite als `basketball`/`ice-hockey` in die DB
+  // zu schreiben ist derselbe Fehler wie ein geratener Wettbewerb (v9.19.3)
+  // — er kostet nur spaeter Zeit, weil der Scan auf erfundene Spiele sucht.
+  // Unbekannt (kein Nav-Beleg) bleibt passend; die Regel weicht damit NIE
+  // ohne Beleg von v9.19.6 ab.
+  const seitenSportart = b365SeitenSportart(d);
+  if (seitenSportart && String(sport || '') && seitenSportart !== String(sport)) {
+    const proben = [];
+    for (const g of gruppen) {
+      if (proben.length >= 3) break;
+      proben.push({ spiel: b365SpielFuerZeile(g.anker, g.texte),
+                    texte: g.texte.slice(0, 12), quoten: g.quoten.slice(0, 12) });
+    }
+    return { kandidaten: [], gruende: { sportart: gruppen.length },
+             zeilen: gruppen.length, proben: proben,
+             seiten_sportart: seitenSportart };
+  }
   // 3. Je Zeile die Kandidaten — Grossenbegrenzung, damit ein Klick nie
   //    hunderte Zeilen in eine Anfrage schreibt.
   const kandidaten = [];
@@ -4822,8 +5200,44 @@ function b365LeseZeilen(dok, sport, league) {
   for (const g of gruppen) {
     if (zeilen >= B365_MAX_LESER_ZEILEN) { gruende['grenze'] = (gruende['grenze'] || 0) + 1; break; }
     zeilen += 1;
-    const spiel = b365SpielFuerZeile(g.anker, g.texte);
-    const e = b365ZeileKandidaten(g.texte, g.quoten, spiel, sport, league);
+    // v9.19.13: Zwei Dinge fehlten auf den Sportart-Seiten und sind gemessen:
+    // (1) der Spiel-Block (zwei Teamnamen, keine Quote) und (2) Markt-Zeilen
+    // OHNE Labels — die Siegermarke „1.92 / 1.83“ traegt keinen Text. Dort
+    // sind die QUOTEN die Zuordnung (erste = Heim, zweite = Aus), belegt
+    // durch denselben Spiel-Block. Ohne Labels + ohne Block bleibt die Zeile
+    // bei `paare` — nicht raten.
+    const teams = b365TeamsFuerZeile(g.anker);
+    // Zuordnung: (1) das Label aus der ZELLE der Quote — die gemessene Form
+    // („+1.5“ neben „1.81“); (2) keine Zell-Labels, aber genau zwei Teamnamen
+    // und zwei Quoten ⇒ die Siegermarke, Position = Heim/Aus; (3) sonst die
+    // Texte des Blocks (alte Form). Ein Rat-Versuch ist keiner davon.
+    const zell = Array.isArray(g.labels) ? g.labels : [];
+    const zellAnz = zell.filter(Boolean).length;
+    let texte;
+    if (zell.length === g.quoten.length && zellAnz === zell.length) {
+      texte = zell.slice();
+    } else if (zellAnz) {
+      // Ein Teil der Zellen trug ein Label, ein Teil nicht — dann bleibt die
+      // alte Positions-Regel im Block (und im Zweifel `paare`, nicht raten).
+      texte = g.texte;
+    } else if (g.quoten.length === 2
+               && b365TeamsImAnker(g.anker).length === 2) {
+      // Tennis-Form: die zwei Namen stehen IN der Zeile (neben Uhrzeit und
+      // Platz-Nummer) — gemessen `#/AS/B13/`. Position = Heim/Aus.
+      texte = b365TeamsImAnker(g.anker);
+    } else if (teams.length === 2 && g.quoten.length === 2) {
+      texte = teams.slice();
+    } else {
+      texte = g.texte;
+    }
+    const spiel = b365SpielFuerZeile(g.anker, texte, teams);
+    // Die Kopf-Suche bekommt BEIDE Namensquellen: den Spiel-Block und die
+    // Texte der Zeile — sonst wird der Spielername als Wettbewerb gelesen
+    // (gemessen 18.10.2026: `league` = „T Griekspoor“).
+    const liga = b365WettbewerbFuerZeile(
+      g.anker, seite, teams.concat(b365TeamsImAnker(g.anker)), g.texte)
+      || seitenLiga;
+    const e = b365ZeileKandidaten(texte, g.quoten, spiel, sport, liga);
     for (const k of Object.keys(e.gruende)) {
       gruende[k] = (gruende[k] || 0) + e.gruende[k];
     }
@@ -4832,14 +5246,17 @@ function b365LeseZeilen(dok, sport, league) {
         if (kandidaten.length >= B365_MAX_LESER_KANDIDATEN) { gruende['kandidaten_grenze'] = 1; break; }
         k.art = k.art || '';
         kandidaten.push({ kind: k.kind, quote: k.quote, label: k.label,
-          seite: k.seite, art: k.art, spiel: spiel, league: league });
+          seite: k.seite, art: k.art, spiel: spiel, league: liga });
       }
     }
     if (proben.length < 3) {
-      proben.push({ spiel: spiel, texte: g.texte.slice(0, 12), quoten: g.quoten.slice(0, 12) });
+      proben.push({ spiel: spiel, texte: texte.slice(0, 12),
+                    quoten: g.quoten.slice(0, 12),
+                    block_texte: g.texte.slice(0, 12) });
     }
   }
-  return { kandidaten: kandidaten, gruende: gruende, zeilen: zeilen, proben: proben };
+  return { kandidaten: kandidaten, gruende: gruende, zeilen: zeilen,
+           proben: proben, seiten_sportart: seitenSportart };
 }
 
 // Ist `el` ein Nachfahre von `anker` (ueber parentElement-Kette)?
@@ -4857,9 +5274,18 @@ function b365BerichtZeile(bericht) {
   const b = bericht || {};
   const leser = b.leser || {};
   return '[BET365-MESSUNG] url=' + (b.hash || b.url || '?')
+    // v9.19.7: gewaehlte Sportart UND die Sportart der Seite. Weichen sie
+    // ab, ist das die Ursache aller Zeilen — sie stand bis v9.19.6 nirgends.
+    + ' sport=' + (b.sport || '?')
+    + ' seite=' + (leser.seiten_sportart || '?')
+    + ' tabs=' + ((b.nav && b.nav.tabs) ? b.nav.tabs.length : 0)
     + ' quoten=' + (b.quoten_anzahl || 0)
     + ' kand=' + (leser.kandidaten || 0)
-    + ' zeilen=' + (leser.zeilen || 0)
+    // `gruppen` = untersuchte Quoten-Gruppen, NICHT gesendete Zeilen:
+    // die Zahl der gesendeten Zeilen steht in `kand`. Bis v9.19.6 hiess
+    // dieses Feld `zeilen` — `zeilen=93 kand=0` las sich wie „93 Zeilen
+    // geschrieben, aber 0 Kandidaten“ (Log 18.10.2026, 10:50).
+    + ' gruppen=' + (leser.zeilen || 0)
     + ' sockets=' + ((b.websockets || []).length)
     + ' anfragewege=' + ((b.anfragen || []).length)
     + ' klassen=' + ((b.klassen || []).length)
@@ -4923,6 +5349,207 @@ const B365_SPORT_OPTIONEN = [
   ['darts', 'Darts'],
 ];
 
+// ---------- Sportart der SEITE (v9.19.7) ----------
+//
+// WARUM DAS DIE ENTSCHEIDENDE ZEILE IST (Nutzerbefund 18.10.2026, „soccer
+// kommt was, bei allen anderen nicht“): Bis v9.19.6 wurde die Sportart nur
+// GEWAEHLT, nie GEPRUEFT. Der Zeilen-Leser bekam `sport` als Parameter und
+// stempelte ihn auf jede Zeile. Solange die offene Seite dieselbe Sportart
+// zeigte wie die Auswahl, ging das gut — sonst entstanden die beiden Fehler,
+// die der Log vom 18.10.2026 zeigt:
+//
+// | Messung (alle auf `#/HO/` = Fußball-Startseite) | kand |
+// |---|---|
+// | soccer            | 51 |
+// | ice-hockey        | 51 |   <- dieselben Fußball-Zeilen, Etikett falsch
+// | basketball        | 51 |   <- dito
+// | tennis / american-football / darts | 0 |  <- `ml_form`: die 1X2-Reihe
+// |                                   |   |     gilt als anderer Markt
+//
+// Zwei Sportarten bekamen damit **51 erfundene Zeilen** (Fußball-Quoten als
+// Basketball/Eishockey in `odds_history` — dieselbe Klasse wie der geratene
+// Wettbewerb aus v9.19.3), drei Sportarten **0 Zeilen** und dazu die geratene
+// Ursachenliste in der GUI. Die gelieferte Zahl haengte also allein an der
+// Auswahl, nicht an der Seite.
+//
+// Die Seite SAGT die Sportart aber selbst: ihre Navigation traegt einen
+// ausgewaehlten Tab (`hsn-NavTab-selected`, Klassen-Histogramm des Berichts
+// 18.10.2026). Daraus wird der Beleg gebaut — **erkannt und abweichend faellt
+// aus, unbekannt bleibt passend** (dieselbe Regel wie `land_passt_liga`,
+// v9.11.25: „unbekannt ist kein Widerspruch“). Ohne Nav-Beleg aendert sich
+// nichts; mit ihm faellt kein falsch etikettierter Kandidat mehr durch.
+function b365NormSport(text) {
+  return String(text === null || text === undefined ? '' : text)
+    .toLowerCase()
+    .replace(/ß/g, 'ss')
+    // ZIFFERN BLEIBEN: „Basketball 2“ ist eine Liga, keine Sportart — wer sie
+    // wegwirft, baut genau das `includes`, das der Liga-Klick seit v9.19.6
+    // verbietet (Test `b365SportartAusText trifft nur die eigene
+    // Beschriftung`; beim ersten Lauf dieses Fixes ist mir das passiert).
+    .replace(/[^a-z0-9äöü ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Navigations-Text -> App-Schluessel („Fußball“ -> `soccer`). Exakt nach
+// Normalisierung: „Basketball“ trifft nicht „Basketball 2“, und ein langer
+// Satz trifft gar nichts. Ohne Treffer bleibt es leer (unbekannt).
+function b365SportartAusText(text) {
+  const gesucht = b365NormSport(text);
+  if (!gesucht) return '';
+  for (const op of B365_SPORT_OPTIONEN) {
+    if (b365NormSport(op[1]) === gesucht) return op[0];
+  }
+  return '';
+}
+
+// Die Navigations-Tabs der Seite: Text und ob dieser Tab AUSGEWAEHLT ist.
+// `gewaehlt` steht oft am Container (`…-selected`), der Text am Kind —
+// deshalb wird bis drei Ebenen nach oben mitgeprueft.
+function b365NavTabs(dok) {
+  const d = dok || {};
+  const alle = (typeof d.querySelectorAll === 'function')
+    ? Array.prototype.slice.call(d.querySelectorAll('*')) : [];
+  const roh = [];
+  for (const el of alle) {
+    const k = String(el.className || '');
+    if (!/navtab/i.test(k)) continue;
+    const text = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 30) continue;
+    let gewaehlt = /selected|active/i.test(k);
+    if (!gewaehlt) {
+      let n = el.parentElement || null;
+      for (let i = 0; i < 3 && n; i++) {
+        if (/selected|active/i.test(String(n.className || ''))) { gewaehlt = true; break; }
+        n = n.parentElement || null;
+      }
+    }
+    roh.push({ text: text, gewaehlt: gewaehlt, klasse: k.slice(0, 60) });
+  }
+  // Je Text ein Eintrag; ausgewaehlt gewinnt (derselbe Tab wird mehrfach
+  // gefunden — Container und Label tragen dieselbe Klasse).
+  const pro = {};
+  const reihe = [];
+  for (const t of roh) {
+    if (!pro[t.text]) { pro[t.text] = { text: t.text, gewaehlt: false, klasse: t.klasse }; reihe.push(pro[t.text]); }
+    if (t.gewaehlt) pro[t.text].gewaehlt = true;
+  }
+  return reihe.slice(0, 20);
+}
+
+// Welche Sportart traegt die ROUTE? (v9.19.9)
+//
+// WARUM es das braucht (Log 18.10.2026, 10:44): auf `#/HO/` war der EINE
+// ausgewaehlte Navigations-Tab „Bundesliga“ — eine LIGA, keine Sportart. Der
+// Tab-Beleg war damit leer (`seite=?`), und `basketball` schrieb **42
+// Fussball-Zeilen** mit falschem Etikett in die DB (gemessen: `sport=soccer
+// kand=42`, direkt danach `sport=basketball kand=42` auf DERSELBEN Seite).
+// Genau die Klasse aus v9.19.3/v9.19.7.
+//
+// Die Route ist hier ein Beleg, keine Vermutung — und jede Zeile unten hat
+// einen Messwert (v9.19.14).
+//
+// | Route        | Sportart   | Beleg 18.10.2026                                      |
+// |--------------|------------|-------------------------------------------------------|
+// | `#/HO/`      | soccer     | 1X2-Reihen mit zwei Teamnamen (113–136 Quoten)         |
+// | `#/AS/B13/`  | tennis     | 30 Quoten / 16 Kand., `league=ATP Brussels`,
+// |              |            | Spieler T Griekspoor, H Rune, J Struff … (15:24:52)    |
+// | `#/AS/B18/`  | basketball | 46–90 Quoten, `blA/blB` + `ou…`, `league=NBA`          |
+//
+// WARUM die beiden AS-Routen dazukommen (Nutzerbefund 18.10.2026, 17:25
+// „wieder keine Treffer“): Die Messung fuer **basketball** lief auf der
+// offenen Tennis-Route `#/AS/B13/` (der Sportart-Klick hatte nicht
+// umgeschaltet) — `seite=?` machte daraus „unbekannt, also passend“, und 16
+// **Tennis**-Zeilen gingen als `sport='basketball'` in die DB (gemessen:
+// `#/AS/B13/ sport=basketball ... kand=16`, dieselben Spiele wie 30 s vorher
+// unter `sport=tennis`). Sie ueberschrieben dort die richtigen Zeilen
+// (`_upsert_snapshot` schluesselt auf league/name/kind) — danach hatte
+// **weder** Tennis noch Basketball etwas Lesbares. Die Route ist der Beleg,
+// der diesen Tausch verhindert: eine erkannte, abweichende Sportart laesst
+// keine Zeile durch (Grund `sportart`), und die App schaltet dann um.
+//
+// Unbekannte Routen bleiben passend („unbekannt ist kein Widerspruch“, dieselbe
+// Regel wie `land_passt_liga`, v9.11.25) — die Liste waechst nur mit Messwerten.
+const B365_ROUTE_SPORT = {
+  'ho': 'soccer',
+  'as/b13': 'tennis',
+  'as/b18': 'basketball',
+};
+
+// Der Schluessel einer Route: die ersten zwei Segmente (`#/AS/B13/` ->
+// `as/b13`, `#/HO/` -> `ho`). So traegt auch eine Unterroute derselben
+// Sportart (`#/AS/B12/K^5/`) ihren Schluessel — ohne dass eine Tiefe geraten
+// wird (dieselbe Lehre wie bei der Markt-Zeile: eine Zahl, keine Tiefe).
+function b365RouteSchluessel(hash) {
+  const h = String(hash === null || hash === undefined ? '' : hash)
+    .replace(/^#\//, '')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+  if (!h) return '';
+  const teile = h.split('/');
+  return teile.length >= 2 ? teile[0] + '/' + teile[1] : teile[0];
+}
+
+function b365SportartAusRoute(hash) {
+  return B365_ROUTE_SPORT[b365RouteSchluessel(hash)] || '';
+}
+
+// Welche Sportart traegt die offene Seite? '' = nicht belegbar (dann gilt
+// keine Zeile als widerspruechlich). Zuerst der AUSGEWAEHLTE Tab — die
+// Navigation fuehrt alle Sportarten, die Auswahl ist der Zustand der Seite.
+// Fehlt er (Startseite: der gewaehlte Tab ist eine Liga), entscheidet die
+// Route (v9.19.9).
+function b365SeitenSportart(dok) {
+  const d = dok || {};
+  const tabs = b365NavTabs(d);
+  for (const t of tabs) {
+    if (!t.gewaehlt) continue;
+    const s = b365SportartAusText(t.text);
+    if (s) return s;
+  }
+  return b365SportartAusRoute((d.location && d.location.hash) || '');
+}
+
+// Navigation der Seite MESSEN (v9.19.6). Kein Klick, kein Urteil — nur die
+// Struktur, die fuer einen echten Liga-Link gebraucht wird.
+//
+// WARUM: der erste Liga-Klick (v9.19.5) nahm einen Namen aus dem
+// `ss-HomepageSpotlight`-Modul und landete auf
+// `#/AC/B1/…/P31358/…` — 2.495 Zeichen, 0 Quoten (Log 18.10.2026). Der Name
+// allein belegt also keinen Liga-Link; gebraucht wird die Stelle, an der die
+// Seite ihre Wettbewerbe fuehrt. Diese Sonde sammelt sie: Klassen mit
+// nav/menu/side/league/competition/breadcrumb und die Anker-Texte.
+function b365NavSpuren(dok) {
+  const d = dok || {};
+  const alle = (typeof d.querySelectorAll === 'function')
+    ? Array.prototype.slice.call(d.querySelectorAll('*')) : [];
+  const klassen = {};
+  const anker = [];
+  for (const el of alle) {
+    const k = String(el.className || '');
+    if (k && /nav|menu|side|league|competition|breadcrumb|accordion/i.test(k)) {
+      klassen[k] = (klassen[k] || 0) + 1;
+    }
+    if (String(el.tagName || '') === 'A' && anker.length < 20) {
+      const href = String((el.getAttribute ? el.getAttribute('href') : '') || '');
+      if (href.indexOf('#/') === 0) {
+        anker.push({ text: String(el.textContent || '').trim().slice(0, 40),
+                     href: href.slice(0, 90) });
+      }
+    }
+  }
+  return {
+    klassen: Object.keys(klassen).map(x => ({ name: x, n: klassen[x] }))
+      .sort((a, b) => b.n - a.n).slice(0, 20),
+    anker: anker,
+    // v9.19.7: die Sportarten-Tabs der Seite MIT Text und Auswahl. Das ist
+    // der Beleg fuer die Sportart der Zeilen — und die Liste, ueber die der
+    // Sportart-Wechsel geklickt wird (statt eine Route zu raten).
+    tabs: b365NavTabs(d),
+    sportart: b365SeitenSportart(d),
+  };
+}
+
 // WAS der Bericht enthaelt — eine Stelle, damit Test und Browser dasselbe
 // pruefen. `dok` ist ein document-aehnliches Objekt (im Test nachgebaut).
 function b365SammleBericht(dok, ereignisse, win) {
@@ -4983,6 +5610,12 @@ function b365SammleBericht(dok, ereignisse, win) {
     hash: (d.location && d.location.hash) || '',
     titel: String(d.title || ''),
     textlaenge: text.length,
+    // v9.19.6: die ersten Zeichen WOERTLICH. Bei 0 Quoten ist das die
+    // einzige Aussage der Seite selbst („Anmelden", „Keine Spiele",
+    // Sperrhinweis) — statt sie zu erraten (Log 18.10.2026: die
+    // angebotene Liga-Route trug 2.495 Zeichen und 0 Quoten, und
+    // niemand konnte sagen, was da stand).
+    text_anfang: text.replace(/\s+/g, ' ').trim().slice(0, 300),
     quoten_anzahl: Object.keys(gesehen).length,
     quoten_beispiele: quoten,
     klassen: b365ZaehleKlassen(klassen).slice(0, B365_MAX_KLASSEN)
@@ -4995,6 +5628,8 @@ function b365SammleBericht(dok, ereignisse, win) {
     // Gruppierung (gemeinsamer Container) und die Wettbewerbs-Kandidaten.
     raster: raster,
     wettbewerb: b365WettbewerbsKandidaten(d),
+    // v9.19.6: wo fuehrt die Seite ihre Wettbewerbe? (Sonde, kein Klick)
+    nav: b365NavSpuren(d),
     anfragen: b365FasseAnfragen(ereignisse).slice(0, 40),
     websockets: b365SammleSockets(ereignisse),
     bus: b365SammleBus(ereignisse).slice(0, 40),
@@ -5216,6 +5851,9 @@ function bet365_messung_knopf() {
       bericht.leser = {
         kandidaten: leser.kandidaten.length, zeilen: leser.zeilen,
         gruende: leser.gruende, proben: leser.proben,
+        // v9.19.7: die Sportart der SEITE gehoert in jeden Bericht — ohne
+        // sie sieht ein Sportart-Widerspruch wie „0 Zeilen“ aus.
+        sport: sport, seiten_sportart: leser.seiten_sportart || '',
       };
     } catch (e) {
       zeigeMeldung('Lesen fehlgeschlagen: ' + String(e).slice(0, 120), '#ff9f9f');
@@ -5257,8 +5895,17 @@ function bet365_messung_knopf() {
           + 'Buchmacher-Dialog „Direkt" → bet365 scannen. Bericht im Log.', '#7ee787');
       } else {
         // KEIN stiller Ausstieg: die Ausfaelle stehen im Log UND hier.
-        zeigeMeldung('Keine lesbaren Quoten — Grund: '
-          + b365GruendeKurz(leser && leser.gruende) + '. Bericht im Log.', '#ffd479');
+        // v9.19.7: Ein Sportart-Widerspruch wird BENANNT. „sportart=115“
+        // allein liesse den Nutzer raten, warum die offene Seite nichts
+        // liefert — die Seite SAGT es aber selbst (`seiten_sportart`).
+        let grundText = b365GruendeKurz(leser && leser.gruende);
+        const seiteSport = (leser && leser.seiten_sportart) || '';
+        if (seiteSport && seiteSport !== sport) {
+          grundText += ' — die Seite zeigt ' + seiteSport
+            + ', gemessen wurde fuer ' + sport;
+        }
+        zeigeMeldung('Keine lesbaren Quoten — Grund: ' + grundText
+          + '. Bericht im Log.', '#ffd479');
       }
     });
   });
@@ -5658,6 +6305,16 @@ if (b365IstZielseite()) {
   // Freundschafts-Wettbewerbe wirklich als "International Matches" /
   // "Club Matches" (MATCH_SYN haengt daran) — das sind echte Namen.
   const PH = /^(fixtures?|all games|all matches|today|tomorrow|upcoming)\b| v /;
+  // Begegnungs-Trenner " @ " (v9.19.15, gemessen 18.10.2026): Betfair trennt
+  // NEUERE Events mit "@" statt " v " ("Boston Celtics @ Detroit Pistons",
+  // "Atlanta Hawks @ Orlando Magic"). `norm` wirft das "@" weg, deshalb steht
+  // der Trenner in der Rohform NICHT in `PH` — und der Spielname (36 Zeichen)
+  // verdraengte als "laengster Name" den COMP-Namen "NBA" (3 Zeichen).
+  // Folge live gemessen: `COMP:10547864` ("NBA") verlor gegen seine eigenen
+  // MENU-Kinder, `scoreCands` fand "nba" in "boston celtics detroit pistons"
+  // nicht und verwarf den EINZIGEN Suchtreffer mit Grund `name` — die
+  // Referenz-DB hatte deshalb **kein NBA**, waehrend bet365 genau NBA liefert.
+  const PH_RAW = /\s@\s/;
   const RUNDE_RE = new RegExp('^(?:' +
     '(?:first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\\s+round' +
     '(?:\\s+of\\s+\\d+)?' +
@@ -5671,6 +6328,8 @@ if (b365IstZielseite()) {
   // (String(null)) und wuerde sonst als echter Name durchgehen.
   const istPlatzhalter = name => {
     if (name === null || name === undefined) return true;
+    // Rohform zuerst: "@" ueberlebt `norm` nicht (s. PH_RAW).
+    if (PH_RAW.test(String(name))) return true;
     const n = norm(name);
     return !n || PH.test(n) || RUNDE_RE.test(n);
   };
@@ -5938,6 +6597,7 @@ if (b365IstZielseite()) {
   // proposeComp (Textsuche) und dem Nav-Baum-Zweipass (Landes-COMPs).
   async function scoreCands(cands, L, sp, bfSid, ctx) {
     const lt = ctx.lt, kt = ctx.kt, ltDist = ctx.ltDist, acro = ctx.acro,
+      ltDistRaw = ctx.ltDistRaw || [],
       root = ctx.root, country = ctx.country, log = ctx.log;
     const lblScore = o => {
       const lc = rawLbl(o);
@@ -6066,6 +6726,18 @@ if (b365IstZielseite()) {
       if (root && !countryHit && foreignCountryRoot(cn, root)) {
         continue;
       }
+      // v9.19.17: Ohne Land im Namen entscheidet das UNTERSCHEIDBARE Token,
+      // nicht das Kuerzel der Serie. Live 18.10.2026 (Discovery 19:17):
+      //   "ATP Lyon - R1"        -> "atp almaty 2026"
+      //   "WTA Osaka - R1"       -> "wta ningbo 2026"
+      //   "ITF Men Austin - F"   -> "itf w50 quebec city can"
+      // Alle drei nur, weil `atp`/`wta`/`itf` als Akronym in `ltDist` steht und
+      // damit `ltDist.some(matchTok)` erfuellte (Score 4 = Schwelle). Die
+      // Stadt kam im BF-Namen nicht vor — und wurde trotzdem uebernommen.
+      // Regel: hat die Liga ein Token ab 4 Zeichen, MUSS eines davon treffen;
+      // das Kuerzel allein reicht dann nicht (sonst trifft jedes Turnier der
+      // Serie). Ligen MIT Land gehen unveraendert den alten Weg.
+      if (!root && ltDistRaw.length && !ltDistRaw.some(matchTok)) continue;
       if (!countryHit && !ltDist.some(matchTok)) {
         // Weder Land noch unterscheidbares Token im BF-Namen: zu generisch
         // (z.B. "SEA V.League - Women" darf nicht auf eine beliebige
@@ -6115,7 +6787,12 @@ if (b365IstZielseite()) {
     let comps = [];
     try { comps = await searchComps(parts, full, bfSid); } catch (e) { comps = []; }
     await sleep(100);
-    if (!comps.length) return { ok: false, reason: 'search' };
+    // v9.19.16: KEIN frueher Ausstieg bei leerer Textsuche mehr. Der
+    // Nav-Rueckfall weiter unten ist ausdruecklich auch fuer diesen Fall
+    // gebaut („Auch bei LEERER Textsuche (reason 'search') pruefen") — der
+    // vorzeitige `return` machte ihn dagegen unerreichbar. Live gemessen
+    // 18.10.2026: 28 von 38 aktiven Tennis-Ligen fielen mit `search` aus,
+    // obwohl der Nav-Baum der Sportart 2 die Turniere fuehrt.
     const lt = toks(L.name);
     const kt = toks(kw);
     // Unterscheidbare Tokens: >= 4 Zeichen (nicht generisch) ODER
@@ -6125,14 +6802,20 @@ if (b365IstZielseite()) {
       .filter(t => /^[A-Z]{2,5}$/.test(t)).map(t => t.toLowerCase())
       .filter(t => t !== 'usa' && !ltDistRaw.includes(t)))];
     const ltDist = ltDistRaw.concat(acro);
-    const ctx = { lt, kt, ltDist, acro, root, country, log };
+    const ctx = { lt, kt, ltDist, ltDistRaw, acro, root, country, log };
     let res;
-    try {
-      res = await scoreCands(comps, L, sp, bfSid, ctx);
-    } catch (e) {
-      devlog('scoreCands-Fehler (' + L.id + ' ' + L.name + '): ' +
-        (e && e.stack ? String(e.stack).split('\n').slice(0, 3).join(' | ') : e));
-      res = { ok: false, reason: 'error', sample: (e && e.message || e) };
+    if (!comps.length) {
+      // Leere Textsuche: kein Fehler, sondern der Zustand, fuer den der
+      // Nav-Rueckfall da ist.
+      res = { ok: false, reason: 'search' };
+    } else {
+      try {
+        res = await scoreCands(comps, L, sp, bfSid, ctx);
+      } catch (e) {
+        devlog('scoreCands-Fehler (' + L.id + ' ' + L.name + '): ' +
+          (e && e.stack ? String(e.stack).split('\n').slice(0, 3).join(' | ') : e));
+        res = { ok: false, reason: 'error', sample: (e && e.message || e) };
+      }
     }
     // Nav-Baum-Zweipass: Textsuche liefert fuer generische Namen ("France -
     // Super Cup") oft nur Fremd-Treffer (uefa super cup) statt des Landes-COMPs
@@ -6142,9 +6825,17 @@ if (b365IstZielseite()) {
     // Auch bei LEERER Textsuche (reason 'search') pruefen: Der BF-Suchindex
     // rankt z.B. "Test Match" (Singular) nicht, obwohl der Nav-Baum die
     // Cricket-Gruppe "test matches" fuehrt (Vorfall 2026-08-13, COMP:11365612).
+    // v9.19.16: auch OHNE Land im Liga-Namen. Live gemessen 18.10.2026: die
+    // Tennis-Ligen heissen „ATP Brussels - Final" (country „atp brussels",
+    // countryRoot = null) — der Nav-Rueckfall lief deshalb nie, und 28 von 38
+    // Tennis-Ligen fielen mit Grund `search` aus, obwohl der Nav-Baum der
+    // Sportart 2 die Turniere fuehrt („atp brussels 2026", „wta ningbo
+    // 2026", „florence challenger 2026"). Ohne Land filtern die
+    // **unterscheidbaren Tokens** der Liga (`ltDist`, z. B. „brussels") die
+    // Gruppen; die Entscheidung bleibt dieselbe (`scoreCands`, Score >= 4).
     if (!res.ok && (res.reason === 'name' || res.reason === 'search') &&
-      root && bfSid !== undefined) {
-      let nav = await navCompsFor(bfSid, country, root);
+      bfSid !== undefined && (root || ltDist.length)) {
+      let nav = await navCompsFor(bfSid, country, root || ltDist);
       if (nav.length) {
         const seen = new Set(comps.map(o => o.cid));
         nav = nav.filter(o => !seen.has(o.cid));
@@ -15146,8 +15837,17 @@ for (const cp of crossPairs2) {
   async function navCompsFor(bfSid, country, root) {
     if (bfSid === undefined) return [];
     const c = norm(country);
+    // v9.19.16: `root` darf auch eine TOKEN-LISTE sein. Ligen OHNE Land im
+    // Namen (Tennis: „ATP Brussels - Final", „WTA Ningbo - QF") hatten
+    // bisher gar keinen Nav-Rueckfall — der Filter lief ueber `country`
+    // („atp brussels") und traf keine Gruppe. Live gemessen 18.10.2026:
+    // Betfair-Suche findet „ITF Men Monastir"/„WTA 125k Mallorca"/„ATP
+    // Challenger Jinan" **nicht** (auch nicht nach Stadt), der Nav-Baum der
+    // Sportart 2 traegt aber 44 Gruppen (u. a. „atp brussels 2026",
+    // „wta ningbo 2026", „florence challenger 2026").
     const cc = root || c;
-    try { return await bfNavComps(bfSid, [cc, c]); } catch (e) { return []; }
+    const like = Array.isArray(cc) ? cc.map(norm).filter(Boolean) : [cc, c];
+    try { return await bfNavComps(bfSid, like.filter(Boolean)); } catch (e) { return []; }
   }
 
   async function searchComps(parts, full, bfSid) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.19.19
+// @version      9.19.20
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan). Auf bet365 (v9.12.0) ein Klick-Knopf fuer einen Mess-Bericht — er schreibt KEINE Quoten.
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -435,6 +435,7 @@
     "al arabi doha": "al arabi qat",
     "al bukiryah": "al bukayriyah",
     "al dhaid": "al thaid",
+    "al faisaly amman": "al faisaly sc",
     "al hazem": "al hazm ksa",
     "al ittihad al sakandary": "al ittihad egy",
     "al jandal": "al jndal",
@@ -705,6 +706,7 @@
     "tottenham hotspur": "tottenham u21",
     "tra united": "tabora united fc",
     "trinbago knight riders": "trinbago knight rid w",
+    "ud ibiza": "ibiza eivissa",
     "udi 19": "rksv udi 1919",
     "ulsan hd": "ulsan hyundai horang i",
     united: "utd",
@@ -770,7 +772,7 @@
     TOKS_CACHE.clear();  // aliasExp laeuft in toks() -> Cache invalidiert
     return true;
   }
-  function aliasExp(s) {
+  function aliasApply(s) {
     let out = s;
     const apply = map => {
       for (const [k, v] of Object.entries(map)) {
@@ -782,11 +784,29 @@
     apply(RUNTIME_ALIAS);
     return out;
   }
+  function aliasExp(s) { return aliasApply(s); }
   function toks(s) {
     let set = TOKS_CACHE.get(s);
     if (!set) {
       set = new Set(aliasExp(norm(s)).split(' ').filter(Boolean));
-      for (const w of normBase(s)) if (MARKER.has(w)) set.add(w);
+      const roh = normBase(s);
+      for (const w of roh) if (MARKER.has(w)) set.add(w);
+      // Marker-behaftete Alias-Schluessel (v9.19.20): aliase wie
+      // "sabah fk" -> "fc sabah" stehen in synonyms.json in der Rohform, der
+      // Regulaere Pfad laeuft aber ueber norm() — und norm() hat die Marker
+      // (fc/fk/sc/...) schon entfernt, der Schluessel existiert dort nicht
+      // mehr. Solche Aliase waren deshalb WIRKUNGSLOS, obwohl der
+      // Name-Matching-Tab sie als „bestaetigt“ anzeigt (gemessen 20.10.2026:
+      // 32 von 313 Alias-Eintraegen betroffen, u.a. "sabah fk"). Deshalb
+      // wird fuer Namen MIT Marker zusaetzlich die Rohform expandiert; die
+      // uebrigen 281 Eintraege laufen unveraendert ueber aliasExp.
+      if (roh.some(w => MARKER.has(w))) {
+        const rohKey = roh.join(' ');
+        const rohExp = aliasApply(rohKey);
+        if (rohExp !== rohKey) {
+          for (const w of rohExp.split(' ').filter(Boolean)) set.add(w);
+        }
+      }
       TOKS_CACHE.set(s, set);
     }
     return set;
@@ -827,6 +847,22 @@
     if (sideBlocked(a, b)) return false;
     const A = toks(a), B = toks(b);
     if (!A.size || !B.size) return false;
+    // Vereins-Marker trennen nichts (v9.19.20). „Sabah FK“ und „FC Sabah“
+    // sind derselbe Verein — die Token-Mengen {sabah,fk} und {fc,sabah}
+    // teilen sich aber nur EIN Token (fk/fc sind keine Praefix-Varianten,
+    // tokCompat verlangt >= 3 Zeichen) und fielen deshalb unter die
+    // 0,6-Quote. Live-Befund 20.10.2026: das BF-Event „FC Sabah v Dortmund“
+    // matchte das PIN-Spiel „Sabah FK v Borussia Dortmund“ nie — das Spiel
+    // stand in scan_games, hatte aber KEINE Zeile in odds_history, und der
+    // bwin-Boost „Borussia Dortmund gewinnt zu Null“ fand keine
+    // Gegenreferenz. Regel: sind die Rumpf-Tokens (ohne Marker) auf beiden
+    // Seiten gleich, unterscheiden sich die Namen nur in der Schreibweise
+    // des Vereins-Suffixes. Die Suwon-Barriere bleibt: „Suwon FC“ gegen
+    // „Suwon Bluewings“ hat verschiedene Rumpf-Mengen ({suwon} /
+    // {suwon,bluewings}) und matcht weiterhin NICHT.
+    const rumpf = M => new Set([...M].filter(t => !MARKER.has(t)));
+    const RA = rumpf(A), RB = rumpf(B);
+    if (RA.size && RA.size === RB.size && [...RA].every(t => RB.has(t))) return true;
     // Treffer zaehlen: exakt ODER praefix-kompatibel (tokCompat, >= 3 Zeichen)
     // ODER Initial-Praefix (initCompat, 1-2 Zeichen). So matchen BF-Kurzformen
     // ("Gim La Plata", "Ben Shelton", "Li Tagger") gegen PIN-Vollnamen — der
@@ -12777,6 +12813,32 @@ if (!hit) continue;
       const cand = (h.w2ns || []).find(w => teamMatch(w.team, b.team));
       if (!cand) {
         log('  W2N ' + b.team + ' ' + b.name + ': kein PIN-Special');
+        // BF-Lay-only-Zeile (v9.19.20). Pinnacle fuehrt „Win to Nil“ nur
+        // sporadisch: gemessen 20.10.2026 in COMP:228 (18 Spiele, 820
+        // Specials) KEIN Vollzeit-W2N (nur „… To Win To Nil 1st Half“), und
+        // im Tages-Log 2693 W2N-Zeilen — alle „kein PIN-Special“. Bisher
+        // entstand dann GAR KEINE Zeile, obwohl Betfair den Markt fuehrt
+        // („Dortmund Win to Nil“, Lay 2.52). Folge: der bwin-Price-Boost
+        // „Borussia Dortmund gewinnt zu Null“ (Back 3.00) hatte keine
+        // Gegenreferenz und wurde als „keine Gegenquote in DB“ verworfen.
+        // Muster wie pts/fgs (BF-Lay-only, back=0): die Quote ist eine echte
+        // Boerse-Quote, kein PIN-Back — der Consumer
+        // (`_finde_gegenquoten_db`) akzeptiert sie seit v9.19.20 auch ohne
+        // Back. Lay >= 1000 ist der BF-Platzhalter und wird NICHT gesendet.
+        const pinTeams = (h && h.teams) || [];
+        if (!pinTeams.length) {
+          // Kein Seiten-Beleg -> keine Zeile. Eine geratene Seite waere ein
+          // falsches Etikett (dieselbe Klasse wie der geratene Wettbewerb).
+          log('  W2N ' + b.team + ' ' + b.name +
+            ': BF-Lay-only verworfen (keine PIN-Teams fuer die Seite)');
+        } else if (b.layYes > 1.01 && b.layYes < 1000) {
+          pushRow(rows, lid, { name: b.name, hit: h, b,
+            kind: teamMatch(pinTeams[0], b.team) ? 'w2nH' : 'w2nA',
+            back: 0,
+            src: 'BF W2N Yes-Lay (kein PIN-Special)',
+            lay: b.layYes, vol: b.volYes,
+            xback: isEchteQuote(b.backNo) ? b.backNo : 0 });
+        }
         continue;
       }
       // W2N-Aequivalente (v8.16.0, analog cs00-Max): "Team gewinnt + BTTS No"

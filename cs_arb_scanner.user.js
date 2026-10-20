@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.19.22
+// @version      9.19.23
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan). Auf bet365 (v9.12.0) ein Klick-Knopf fuer einen Mess-Bericht — er schreibt KEINE Quoten.
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -9547,6 +9547,14 @@ async function autoTourLid(lid, comp, log) {
         for (const l of g) {
           if (l && (l.id || l.leagueId)) {
             const lid = l.id || l.leagueId;
+            const lname = String(l.name || '');
+            // v9.19.23: `kw` filtert die Liga-Liste. Vorher loggte der Walk nur
+            // `keys in <url>` und die Zaehler — eine gezielte Suche („NBA?")
+            // blieb im 600-Call-Budget unsichtbar (gemessen 20.10.2026: 1468
+            // Basketball-Ligen, Namen wurden nie geloggt).
+            if (o.kw && lname &&
+                lname.toLowerCase().indexOf(String(o.kw).toLowerCase()) !== -1)
+              log('  * KW-Liga "' + lname + '" (id=' + lid + ', sid ' + sid + ')');
             if (!ligaMax || nL < ligaMax) {
               const lu = '/leagues/' + lid;
               if (!known.has(lu)) { known.add(lu); queue.push(lu); }

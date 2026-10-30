@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.19.23
+// @version      9.19.85
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan). Auf bet365 (v9.12.0) ein Klick-Knopf fuer einen Mess-Bericht — er schreibt KEINE Quoten.
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -424,9 +424,11 @@
   // JEDEN teamMatch()-Aufruf (findH, sideLay, mo3Clean, hfSide, evMatch, ...).
   // __SYNONYMS_SIDEALIAS_BEGIN__
   const SIDE_ALIAS = {
+    "9 de octubre": "club nueve de octubre",
     "a ali": "aali club",
     "abu qair semad": "abo qair semads",
     "ad cofutpa": "a d cofutpa",
+    "aek larnaca": "aek larnacas",
     "ael limassol": "a e l",
     "agrobiznes volochisk": "agrobiznes volochysk",
     "al adalah": "al adalh",
@@ -474,6 +476,10 @@
     "banga gargzdai": "fk banga gargzdu",
     "banik lehota pod vtacnikom": "ofk banik lehota",
     "barcelona sc": "barcelona ecu",
+    "bc botev 2012": "botev 2012 vratsa",
+    "bc lokomotiv plovdiv": "lokomotiv plovdiv 1926",
+    "bc namur capitale": "basket namur capitale women",
+    "bcc derthona basket": "bcc derthona women",
     "beijing institute of technology": "beijing tech fc",
     "benfica ii": "benfica b",
     "berck fliers range": "berck rang du fliers",
@@ -489,9 +495,11 @@
     "busan transportation corporation": "busan transportation corp",
     "bw linz": "fc blau weiss linz",
     "cambuur leeuwaarden": "cambuur leeuwarden",
+    "cbk mersin yenisehir bld": "cbk mersin women",
     "ceara sc": "ceara",
     "celta vigo ii": "celta vigo b",
     "celtic ii": "celtic b",
+    "cff andoharanofotsy": "cffa",
     "cha choeng sao": "chachoengsao fc",
     "charlton athletic": "charlton u21",
     "chernomorets 1919 burgas": "chernomorets bourgas",
@@ -501,6 +509,7 @@
     "columbus crew ii": "columbus crew 2",
     "corvinul hunedoara": "fc hunedoara",
     "cs sfaxien": "club sportif sfaxien",
+    "cs universitatea craiova": "csm universitatea craio",
     "csikszereda miercurea ciuc": "csikszereda w",
     czechia: "czech republic u20",
     "d c united": "dc utd",
@@ -516,6 +525,7 @@
     "dukla prague": "fk dukla praha u19",
     "dundee united": "dundee utd",
     "dynamo kyiv": "dynamo kiev",
+    "dziki warshawa": "dziki warszawa",
     easterns: "eastern storm",
     egersunds: "egersund",
     "el geish": "talaea el gaish",
@@ -531,6 +541,7 @@
     "fc bacau": "acs bacau",
     "fc barcelona": "barcelona w",
     "fc gangneung": "gangneung city",
+    "ferro carril oeste": "ferro carril res",
     "ferrocarril midland": "fc midland",
     "fh hafnarfjordur": "hafnarfjordur w",
     "flora tallinn": "tallinna fc flora",
@@ -540,9 +551,12 @@
     "fratria varna": "fc fratria",
     "french guiana": "french guyana",
     "fsk mariupol": "yarud mariupol",
+    "fujairah fc": "dibba al fujairah u21",
     "g osaka": "gamba osaka",
     "gandzasar kapan": "fc gandzasar",
     "gargzdai sc": "gargzdai basketball",
+    gazalkent: "g azalkent fk",
+    "geneva lions": "les lions de geneve",
     "gimnasia la plata": "gimnasia y esgrima la p",
     "glasgow cosmics": "glasgow cosmic",
     "gloria bistrita": "cs bistrita",
@@ -565,12 +579,15 @@
     "independiente medellin": "ind medellin",
     "independiente petrolero": "inde",
     "inegol kafkasspor": "inegol kafkas genclikspor",
+    "inter basket": "inter basquet",
     "internacional de palmira": "inter palmir",
     internazionale: "inter",
     "internazionale u23": "inter milan",
+    "ipswich town": "ipswich w",
     "istra 1961": "nk istra",
     "ittihad al ramtha": "etihad al ramtha",
     "iwaki fc": "iwaki sc",
+    "jablonec ii": "fk jablonec b",
     "jagiellonia bialystok": "jagiellonia bialystock",
     "jeju sk": "jeju utd",
     "jezero plav": "fk jezero",
@@ -578,18 +595,25 @@
     "juventus next gen": "juventus b",
     "kagoshima united": "kagoshima utd",
     "kaisar kyzylorda": "fk kaisar",
+    "kangoeroes mechelen": "kangoeroes basket meche",
     "kansas city current": "kansas city w",
     "karakopru belediye spor": "karakopru belediyespor",
     karlsruher: "karlsruhe",
+    "kasem bundit university": "kasembundit fc",
     "kauno zalgiris ii": "fk kauno zalgiris 2",
+    kazincbarcikai: "kazincbarcika",
     "kendal tornado": "tornado fc",
-    "khor fakkan club": "al khaleej khor fakkan",
+    "keravnos strovolou nicosia": "keravnos bc",
+    "khor fakkan club": "khorfakkan u23",
+    "kk mzt skopje aerodrom": "mzt skopje aerodom",
     "kolos kovalivka": "kolos kovalyovka",
     "kolos kovalivka ii": "fc kolos kovalivka 2",
+    "kolossos rhodes": "ao kolossos rodou",
     kristianstad: "kristianstads",
     "kts k luzino": "wiked luzino",
     "kuching city": "kuching fa",
     "lamphun warriors": "lamphun warrior",
+    "landerneau bretagne basket": "landerneau bretagne bas",
     "leicester city": "leicester u21",
     "levadia tallinn": "fci tallinn",
     "levadia tallinn iii": "tallinna fc levadia u19",
@@ -606,19 +630,24 @@
     "m'gladbach": "borussia monchengladbach",
     "maardu linnameeskond": "fc maardu",
     "machida zelvia": "fc machida",
+    "magnolia basket": "magnolia campobasso wom",
     "maleyet kafr el zayiat": "maleyeit kafr el zayiat",
     "man city": "manchester city",
     "man utd": "manchester united",
+    "martin o donnell": "martin odonnell",
     "mb rouisset": "mb rouissat",
     "metalist 1925 kharkiv": "fc kharkiv",
     "mfk ruzomberok ii": "mfk ruzomberok b",
     mgladbach: "borussia monchengladbach",
     "minnesota united": "minnesota utd",
+    "mlada boleslav ii": "mlada boleslav b",
     "mohammedan reserves": "mohammedan sc res",
+    "montana 2003 bc": "montana 2003 women",
     "mornar bar": "fk mornar",
     "nacional asuncion": "nacional par",
     "nacional de football": "nacional uru",
     "neftchi fergona": "neftchi fargona",
+    "neftchi ik baku": "neftchi bc",
     "nk celik zenika": "celik zenica",
     "nk izola": "mnk izola",
     "nogoom fc": "nogoom el mostakbal",
@@ -640,6 +669,7 @@
     "oxford united": "oxford utd",
     paksi: "paks",
     "paok ii": "paok b",
+    "pardubice ii": "pardubice b",
     "paris saint germain": "paris st g",
     "parnu vaprus ii": "parnu jk vaprus u21",
     pats: "patriots",
@@ -651,9 +681,12 @@
     "porto ii": "porto b",
     "qadsia sc": "al qadsia",
     "racing club de montevideo": "racing club uru",
+    "racing de cordoba": "ca racing de cordo",
     "rapid bucuresti": "rapid bucharest",
     "rapid vienna ii": "rapid vienna am",
+    "rc arbaa": "rc arba",
     "real sociedad ii": "sociedad b",
+    "reyer venezia mestre": "reyer venezia women",
     "rfc liege": "fc liege",
     "riga fc": "fk riga",
     "river plate montevideo": "river plate uru",
@@ -667,12 +700,15 @@
     "saint vincent and the grenadines": "st vincent grenadines",
     "san en neo phoenix": "san en neophoenix",
     "sc poltava": "sk poltava",
+    "scr altach ii": "scr altach am",
     "sd atletico nacional": "atletico nacional pan",
     "sebat genclikspor": "sebat sk",
     "seraing utd": "seraing",
     "serc wild wings": "schwenninger wild wings",
     "sfk 2000 sarajevo": "sfa 2000 sarajevo w",
+    "shakhtar donetsk": "shakhtar u19",
     "shandong taishan ii": "shandong taishan b",
+    "shanghai port ii": "shanghai port b",
     "shanghai segenda": "shanghai second",
     "sharjah fc": "al sharjah",
     "sheffield wednesday": "sheff wed",
@@ -680,8 +716,12 @@
     "shinshu brave warriors": "nagano shinshu brave warrio",
     "sint truidense": "sint truiden",
     "sk slovan bratislava": "slovan bratislava u19",
+    "skn st polten basketball": "skn st polten basketba",
+    "slavia prague": "sk slavia praha u19",
+    "slovan liberec ii": "slovan liberec b",
     "sonnenhof grossaspach": "sg sonnenhof",
     "sparkasse fc bw feldkirch": "bw fledkirch",
+    "sparta prague ii": "sparta prague b",
     "sporting cp": "sporting lisbon",
     "sporting lisbon ii": "sporting lisbon b",
     "st mirren ii": "st mirren b",
@@ -702,6 +742,7 @@
     "tochigi city": "tochigi uva fc",
     "tokyo verdy": "tokyo v",
     "tomislav donji andrijevci": "nk tomislav",
+    "tomoki kameda": "komiki kameda",
     "top oss": "fc oss",
     "tottenham hotspur": "tottenham u21",
     "tra united": "tabora united fc",
@@ -709,9 +750,12 @@
     "ud ibiza": "ibiza eivissa",
     "udi 19": "rksv udi 1919",
     "ulsan hd": "ulsan hyundai horang i",
+    "unicaja malaga": "baloncesto malaga",
+    "union rochefortoise": "rochefort",
     united: "utd",
     "universidad catolica del ecuador": "univ catolica ecu",
     "universidad de concepcion": "univ de concepcion",
+    "valencia basket club": "valencia b c women",
     vanspor: "van buyuksehir belediyespor",
     "veertien mie": "veertien kuwana",
     "victorian bushrangers": "victoria",
@@ -724,6 +768,7 @@
     "wenzhou fc": "wenzhou professional",
     "west bromwich albion": "west brom",
     "west ham united": "west ham u21",
+    "western sydney wanderers": "western sydney w",
     "wigan athletic": "wigan",
     "william o connor": "william oconnor",
     wolves: "wolverhampton",
@@ -738,7 +783,8 @@
     "yscc yokohama": "yokohama scc",
     zalaegerszegi: "zalaegerszeg",
     "zhetysu taldykorgan": "fc zhetysu",
-    "zonguldak komurspor": "zonguldakspor"
+    "zonguldak komurspor": "zonguldakspor",
+    "zvvz usk prague": "zvvz usk praha women"
   };
   // __SYNONYMS_SIDEALIAS_END__
   // CPL (Cricket): PIN "St. Kitts and Nevis Patriots" / "Barbados Royals" vs
@@ -1151,6 +1197,53 @@
     // wie dort; die Abgrenzung bleibt: NUR der exakte Markt.
     if (/^(player )?first goalscorer$/i.test(n)) tags.add('fgs');
     return tags;
+  }
+
+  // ---------- BF-Lay-only-Zeilen (v9.19.85) ----------
+  // Betfair fuehrt Maerkte/Linien, die Pinnacle NICHT hat (gemessen
+  // 30.10.2026 mit dem WHY-Pull, `SCR Altach v SV Ried`, PIN-Matchup
+  // 1638761169): BF liefert „Both Teams To Score?" (Yes-Lay 1.53 / No-Lay
+  // 2.46) und „First Half Goals 0.5/2.5", Pinnacle fuehrt fuer dieses Spiel
+  // `yn(BTTS)=0` und nur die 1.5er-HT-Linie. Der Scan verwarf beide still —
+  // der Merkur-Quotenboost „Tipp X / Over 3,5 Tore / beide treffen" meldete
+  // „bttsY (kein verwandter Markt im Scan)", obwohl die Boerse die
+  // Gegenquote hat.
+  //
+  // Diese beiden Funktionen sind die EINE Regel dafuer (Muster wie die
+  // w2n-Zeilen aus v9.19.20): `back: 0` heisst „keine PIN-Quote vorhanden",
+  // `lay` ist eine echte Boersen-Quote, `xback` der BF-Back der Gegenseite
+  // (Back-Back-Cross-Gegenwette). Platzhalter-Preise (100/110) und der
+  // BF-Lay-Platzhalter >= 1000 fliegen ueber `istQuote` raus.
+  //
+  // `istQuote` wird injiziert, damit die Funktionen ohne den vollen
+  // Userscript-Scope testbar bleiben (`isEchteQuote` in diesem Scope).
+  function hfouBfOnlyRows(line, b, istQuote) {
+    const q = istQuote || isEchteQuote;
+    const code = String(Math.round(line * 10)).padStart(2, '0');
+    const out = [];
+    if (q(b.layO) && b.layO < 1000)
+      out.push({ kind: 'hfou' + code + 'O', back: 0, lay: b.layO,
+        vol: b.volO || 0, xback: q(b.backU) ? b.backU : 0,
+        src: 'BF HT O/U ' + line + ' Over-Lay (kein PIN-Markt)' });
+    if (q(b.layU) && b.layU < 1000)
+      out.push({ kind: 'hfou' + code + 'U', back: 0, lay: b.layU,
+        vol: b.volU || 0, xback: q(b.backO) ? b.backO : 0,
+        src: 'BF HT O/U ' + line + ' Under-Lay (kein PIN-Markt)' });
+    return out;
+  }
+
+  function bttsBfOnlyRows(b, istQuote) {
+    const q = istQuote || isEchteQuote;
+    const out = [];
+    if (q(b.layYes) && b.layYes < 1000)
+      out.push({ kind: 'bttsY', back: 0, lay: b.layYes, vol: b.volYes || 0,
+        xback: q(b.backNo) ? b.backNo : 0,
+        src: 'BF BTTS Ja (Lay, kein PIN-Special)' });
+    if (q(b.layNo) && b.layNo < 1000)
+      out.push({ kind: 'bttsN', back: 0, lay: b.layNo, vol: b.volNo || 0,
+        xback: q(b.backYes) ? b.backYes : 0,
+        src: 'BF BTTS Nein (Lay, kein PIN-Special)' });
+    return out;
   }
 
   // ---------- Event-Matching ----------
@@ -3029,7 +3122,10 @@
           const tm = /^(over|under) (\d+\.?\d*)/i.exec(nm);
           if (tm) {
             const line = parseFloat(tm[2]);
-            if (line >= 0.5 && line <= 2.5) {
+            // Team-Totals bis 4.5 (v9.19.36) — dieselbe Grenze wie in
+            // teamTotalsOf (main.js); sonst deckt BF die 3,5-Linie, die PIN
+            // liefert, nie ab.
+            if (line >= 0.5 && line <= 4.5) {
               const side = tm[1].toLowerCase();
               (teamTotLines[line] = teamTotLines[line] || {})[side] = l;
               const bkP = bk && bk.price < MAX_LAY_PRICE ? bk : null;
@@ -4596,6 +4692,21 @@ const B365_MARKT_WOERTER = ['money line', 'moneyline', 'sieger', 'gewinner',
 // wurden daraus vier „Teamnamen“ und die Zeile fiel mit `paare` aus.
 const B365_ZEIT_MUSTER = /^(mo|di|mi|do|fr|sa|so)\b|^\d{1,2}:\d{2}|^\d{1,2}\.\s*\d{1,2}\.?$/i;
 
+// Begleit-Texte des Coupons: weder Markt noch Teamname.
+//
+// GEMESSEN 21.10.2026 auf `#/AS/B13/` (Tennis, Bericht 06:01:43): der
+// Event-Knoten (`DIV.cpr-23`) traegt neben den zwei Spielernamen und den
+// zwei Quoten die Uhrzeit UND den Link „Statistik“. Die Uhrzeit fing
+// `B365_ZEIT_MUSTER`, „Statistik“ wurde ueber die Rueckfall-Regel als
+// **Teamname** gelesen — daraus wurden drei „Teams“, `b365TeamsImAnker`
+// gab auf (mehr als zwei Namen) und die Positions-Regel der Zweiwege-Marke
+// kam nie zur Geltung: ALLE 35 Zeilen der Seite fielen mit `paare` aus
+// (67 Quoten gelesen, 0 Kandidaten, `spiel=""`). Genau der Befund, den der
+// Nutzer als „leer — … Grund: paare=35“ sah (Log 21.10.2026, 08:01:43).
+//
+// Nur das gemessene Wort steht hier — kein geratener Katalog.
+const B365_BEGLEIT_WOERTER = ['statistik'];
+
 // Was IST dieses Label? Rein (kein DOM), eine Stelle fuer alle Faelle.
 // Rueckgabe: {art, richtung?, linie?} oder null (leer).
 //   art 'ou'     Uber/Unter MIT Linie im Text („O 48.5", „Über 2,5") —
@@ -4639,6 +4750,8 @@ function b365LabelArt(label) {
   if (B365_MARKT_WOERTER.indexOf(s) >= 0) return { art: 'markt' };
   // 10. Datum/Uhrzeit — weder Team noch Markt (gemessen: „12:00“).
   if (B365_ZEIT_MUSTER.test(s)) return { art: 'zeit' };
+  // 10b. Begleit-Text („Statistik“) — kein Teamname, kein Markt, kein Kopf.
+  if (B365_BEGLEIT_WOERTER.indexOf(s) >= 0) return { art: 'zusatz' };
   // 11. sonst: Teamname
   return { art: 'team', text: roh };
 }
@@ -5079,6 +5192,9 @@ function b365KopfName(anker, teams, texte) {
         && zeile.indexOf(kopf) < 0
         && !B365_ZEIT_MUSTER.test(kopf)
         && B365_MARKT_WOERTER.indexOf(kopf.toLowerCase()) < 0
+        // Ein Begleit-Text ist kein Wettbewerb („Statistik“ steht als
+        // eigene Zeile im Event-Knoten — gemessen 21.10.2026).
+        && B365_BEGLEIT_WOERTER.indexOf(kopf.toLowerCase()) < 0
         && !/\d{3,}/.test(kopf)
         // Ein SPIELNAME ist kein Wettbewerb: die Form „A - B“ steht auf der
         // Seite einmal je Spiel. Ohne diese Zeile wuerde der Kopf-Fallback
@@ -5265,6 +5381,20 @@ function b365LeseZeilen(dok, sport, league) {
       texte = teams.slice();
     } else {
       texte = g.texte;
+      // 21.10.2026, gemessen `#/AS/B1/` (CL-Route, ohne Anmeldung): der
+      // Anker ist der Event-Block — drei Quoten, aber VIER Texte (zwei
+      // Namen, „21:00“, „Statistik“), und `b365Dreiwege` verlangt
+      // ausschliesslich zwei Namen und kippt. Genau das war der gemessene
+      // Befund: `gruende={paare:44, ml_form:10}` von 54 Gruppen bei 162
+      // Quoten auf der Seite. Die Namen stehen IM Spiel-Block — derselbe
+      // Beleg wie bei den Block-Faellen ohne Labels oben, und die
+      // Reihenfolge ist Heim/X/Aus. Nur bei drei Quoten UND genau zwei
+      // Namen tauschen;
+      // alles andere bleibt wie es war (kein Rat-Versuch).
+      if (g.quoten.length === 3) {
+        const namen = b365TeamsImAnker(g.anker);
+        if (namen.length === 2) texte = namen;
+      }
     }
     const spiel = b365SpielFuerZeile(g.anker, texte, teams);
     // Die Kopf-Suche bekommt BEIDE Namensquellen: den Spiel-Block und die
@@ -5485,9 +5615,10 @@ function b365NavTabs(dok) {
 // Die Route ist hier ein Beleg, keine Vermutung — und jede Zeile unten hat
 // einen Messwert (v9.19.14).
 //
-// | Route        | Sportart   | Beleg 18.10.2026                                      |
+// | Route        | Sportart   | Beleg                                                 |
 // |--------------|------------|-------------------------------------------------------|
 // | `#/HO/`      | soccer     | 1X2-Reihen mit zwei Teamnamen (113–136 Quoten)         |
+// | `#/AS/B1/`   | soccer     | der Sportart-Tab „Fußball“ landet hier (Sonde 20.10)   |
 // | `#/AS/B13/`  | tennis     | 30 Quoten / 16 Kand., `league=ATP Brussels`,
 // |              |            | Spieler T Griekspoor, H Rune, J Struff … (15:24:52)    |
 // | `#/AS/B18/`  | basketball | 46–90 Quoten, `blA/blB` + `ou…`, `league=NBA`          |
@@ -5506,8 +5637,15 @@ function b365NavTabs(dok) {
 //
 // Unbekannte Routen bleiben passend („unbekannt ist kein Widerspruch“, dieselbe
 // Regel wie `land_passt_liga`, v9.11.25) — die Liste waechst nur mit Messwerten.
+//
+// v9.19.27 (Nutzerbefund 20.10.2026, „nun zu fussball bei bet365“): die
+// Fussball-Tab-Messung (eigene Sonde, echter Klick von `#/AS/B13/`) landete
+// auf `#/AS/B1/K%5E5/` — bis hierher war nur `#/HO/` als Fussball belegt, und
+// der Klick auf die Leiste waere ohne diesen Eintrag eine unbekannte Route
+// geblieben.
 const B365_ROUTE_SPORT = {
   'ho': 'soccer',
+  'as/b1': 'soccer',
   'as/b13': 'tennis',
   'as/b18': 'basketball',
 };
@@ -9544,6 +9682,13 @@ async function autoTourLid(lid, comp, log) {
       }
       if (phase1 === 'league-list' && Array.isArray(g)) {
         let nL = 0;
+        // v9.19.25: `kw`-Treffer werden GEZÄHLT, nicht nur geloggt. Ohne die
+        // Zahl war eine Suche ohne Treffer ein STUMMER Ausstieg (genau die
+        // Klasse aus v9.11.16): live 20.10.2026 lief `kw=bbl` über die
+        // Basketball-Listen und loggte nichts — ob PIN die BBL führt, war
+        // danach immer noch nicht beantwortet, obwohl der Walk gelaufen war.
+        // Die Abschlusszeile nennt jetzt Treffer UND geprüfte Liga-Zahl.
+        let kwTreffer = 0, kwGesehen = 0;
         for (const l of g) {
           if (l && (l.id || l.leagueId)) {
             const lid = l.id || l.leagueId;
@@ -9552,9 +9697,13 @@ async function autoTourLid(lid, comp, log) {
             // `keys in <url>` und die Zaehler — eine gezielte Suche („NBA?")
             // blieb im 600-Call-Budget unsichtbar (gemessen 20.10.2026: 1468
             // Basketball-Ligen, Namen wurden nie geloggt).
-            if (o.kw && lname &&
-                lname.toLowerCase().indexOf(String(o.kw).toLowerCase()) !== -1)
-              log('  * KW-Liga "' + lname + '" (id=' + lid + ', sid ' + sid + ')');
+            if (o.kw && lname) {
+              kwGesehen++;
+              if (lname.toLowerCase().indexOf(String(o.kw).toLowerCase()) !== -1) {
+                kwTreffer++;
+                log('  * KW-Liga "' + lname + '" (id=' + lid + ', sid ' + sid + ')');
+              }
+            }
             if (!ligaMax || nL < ligaMax) {
               const lu = '/leagues/' + lid;
               if (!known.has(lu)) { known.add(lu); queue.push(lu); }
@@ -9562,6 +9711,9 @@ async function autoTourLid(lid, comp, log) {
             }
           }
         }
+        if (o.kw)
+          log('  * KW-Suche "' + o.kw + '": ' + kwTreffer + ' Treffer von ' +
+              kwGesehen + ' Ligen (sid ' + sid + ')');
       }
       if (phase1 === 'matchups' && Array.isArray(g)) {
         for (const m of g) {
@@ -11098,7 +11250,7 @@ if (!hit) continue;
         if (cov.hcs.has(key)) continue;
         po('hcs' + key.replace(',', ''), h.htCsBacks[key], 'PIN HT-CS ' + key);
       }
-      // 11) Team-Totals 0,5–2,5 je Team (v8.96.1, hier generisch integriert).
+      // 11) Team-Totals 0,5–4,5 je Team (v8.96.1, Linien-Decke seit v9.19.36).
       const ttPins = [];
       for (const m of straight) {
         if (m.type !== 'team_total' || Number(m.period) !== 0) continue;
@@ -11115,7 +11267,7 @@ if (!hit) continue;
         }
         const over = toDecU(tp['over']), under = toDecU(tp['under']);
         if (over > 1.01 && under > 1.01 && typeof tp.line === 'number' &&
-          tp.line >= 0.5 && tp.line <= 2.5)
+          tp.line >= 0.5 && tp.line <= 4.5)
           ttPins.push({ side: side.toLowerCase(), line: tp.line, over, under });
       }
       for (const o of ttPins) {
@@ -11608,7 +11760,7 @@ if (!hit) continue;
             isEchteQuote(b.backO) ? b.backO : 0);
         }
       } else if (k === 'ttot') {
-        // Team-Totals: PIN team_total period 0 (0.5–2.5 je Team) vs BF
+        // Team-Totals: PIN team_total period 0 (0.5–4.5 je Team) vs BF
         // "Team X Over/Under Y Goals" — Back-Lay + Back-Back-Crosslegs.
         // Analog scan.js (emitTeamTotalEs): Team-Match + Linien-Cover.
         const sideChar = teamMatch(b.team, h.teams[0]) ? 'H' :
@@ -11617,7 +11769,7 @@ if (!hit) continue;
           add(k, null, null, 'kein PIN-Team-Match fuer ' + b.team,
             'BF ' + b.team + ' line=' + b.line, '');
         } else {
-          // Inline teamTotalsOf: team_total period 0, Linien 0.5–2.5
+          // Inline teamTotalsOf: team_total period 0, Linien 0.5–4.5
           const ttSide = m => {
             const d = String(m.designation || m.side || '').toLowerCase();
             if (d === 'home') return 'home';
@@ -11638,7 +11790,7 @@ if (!hit) continue;
             }
             const over = toDecU(tp['over']), under = toDecU(tp['under']);
             if (over > 1.01 && under > 1.01 && typeof tp.line === 'number' &&
-              tp.line >= 0.5 && tp.line <= 2.5) {
+              tp.line >= 0.5 && tp.line <= 4.5) {
               pinTotals.push({ team: side, line: tp.line, over, under });
             }
           }
@@ -12527,9 +12679,9 @@ if (!hit) continue;
     const bb = bests.reduce((b2, x) =>
       (x && (!b2 || x.score < b2.score)) ? x : b2, null);
     if (!ok.length && yn.length)
-      if (DBG) log('  BTTS-DBG ' + b.name + ': ' + yn.length + ' Specs geprueft, 0 OK');
-    if (pre) log('  BTTS ' + b.name + ': Spec ' + pre.sid + ' "' + (pre.desc || '?') + '" (Yes ' + pre.yes.toFixed(2) +
+      if (DBG) log('  BTTS-DBG ' + b.name + ': ' + yn.length + ' Specs geprueft, 0 OK');    if (pre) log('  BTTS ' + b.name + ': Spec ' + pre.sid + '"' + (pre.desc || '?') + '" (Yes ' + pre.yes.toFixed(2) +
       ' / No ' + pre.no.toFixed(2) + ') Score ' + pre.score.toFixed(3));
+    else if (!yn.length) log('  BTTS ' + b.name + ': kein PIN-Special (BF-Lay-only)');
     else log('  BTTS ' + b.name + ': kein Preismatch (Score >= ' + PRICE_MATCH_THRESHOLD + ')');
     if (bb && (!pre || bb.sid !== pre.sid))
       log('  BTTS BB ' + b.name + ': Spec ' + bb.sid + ' "' + (bb.desc || '?') + '" (Yes ' + bb.yes.toFixed(2) +
@@ -12758,7 +12910,16 @@ if (!hit) continue;
         pushRow(rows, lid, { name: b.name, hit: h, b,
           kind: b.kind, back: htBack, src: 'HT CS ' + hcsKey,
           lay: b.lay, vol: b.vol });
-      } else if (b.kind === 'btts' && h.yn && h.yn.length) {
+      } else if (b.kind === 'btts') {
+        // v9.19.85: AUCH ohne PIN-Special sammeln. Bisher fiel das Paar hier
+        // still heraus (`&& h.yn && h.yn.length`) — gemessen 30.10.2026 an
+        // „SCR Altach v SV Ried": `yn(BTTS)=0` (Pinnacle fuehrt kein
+        // „Both Teams To Score?" fuer dieses Spiel), Betfair fuehrt den
+        // Markt (Yes-Lay 1.53 / No-Lay 2.46). Folge: gar keine btts-Zeile in
+        // der DB, und der Merkur-Quotenboost „Tipp X / Over 3,5 Tore / beide
+        // treffen" meldete „bttsY (kein verwandter Markt im Scan)", obwohl
+        // die Boerse die Gegenquote hat. Die BF-Lay-only-Zeile entsteht
+        // unten (Muster wie w2n, v9.19.20).
         btts.push({ h, b });
       } else if (b.kind === 'ou') {
         ous.push({ h, b });
@@ -13145,13 +13306,16 @@ if (!hit) continue;
     // (mlIds, ouMlIds, hfouMlIds), sodass ein Spiel, das in mehrere Kategorien
     // faellt (z.B. DNB + O/U + HT-O/U), denselben /markets/straight-Call bis zu
     // 3x ausloeste. Das Set dedupliziert; alle Spiele werden parallel geladen.
-    const mlIds = [...new Set([
-      ...dnbs.map(d => d.h.id), ...dcs.map(d => d.h.id),
-      ...mo3s.map(d => d.h.id), ...mo3hs.map(d => d.h.id),
-      ...ahs.map(d => d.h.id), ...tqs.map(d => d.h.id),
-      ...ous.map(d => d.h.id), ...hfous.map(d => d.h.id),
-      ...tts.map(d => d.h.id)
-    ])];
+    const mlPairs = [
+      ...dnbs, ...dcs, ...mo3s, ...mo3hs, ...ahs,
+      ...tqs, ...ous, ...hfous, ...tts
+    ];
+    // hById (v9.19.36): dieselbe Quelle wie mlIds. Der PIN-only-Team-Total-
+    // Zweig braucht das PIN-Event je id — wenn BF den ttot-Markt gar nicht
+    // führt, existiert kein {h, b}-Paar, aus dem er sich sonst bedienen
+    // könnte (Nutzerbefund 24.10.2026: „BF bietet zur Zeit kein Markt an").
+    const hById = new Map(mlPairs.map(d => [d.h.id, d.h]));
+    const mlIds = [...new Set(mlPairs.map(d => d.h.id))];
     const mlCache = {};
     if (mlIds.length) {
       const fetched = await pool(mlIds, id =>
@@ -13546,7 +13710,8 @@ for (const cp of crossPairs2) {
       }
     }
     for (const { h, b } of btts) {
-      const { pre, bb } = await pinBtts(h.yn, b, log);
+      const yn = h.yn || [];
+      const { pre, bb } = await pinBtts(yn, b, log);
       // BB-Arb immer pruefen (unabhaengig vom Preismatch)
       if (bb && isEchteQuote(b.backNo) && isEchteQuote(bb.yes)) {
         const eBBY = computeBBEdge(bb.yes, b.backNo);
@@ -13566,7 +13731,25 @@ for (const cp of crossPairs2) {
             kind: 'bttsBBN', back: bb.no, src: 'BTTS No + BF Yes (Spec ' + bb.sid + ')',
             lay: b.backYes, vol: b.volBYes });
       }
-      if (!pre) continue;
+      if (!pre) {
+        // BF-Lay-only-Zeilen (v9.19.85, Muster wie w2n v9.19.20): Betfair
+        // fuehrt den BTTS-Markt, Pinnacle nicht (oder ohne Preismatch).
+        // `back: 0` = keine PIN-Quote — der Consumer
+        // (`_finde_gegenquoten_db`) nimmt die Zeile seit v9.19.20 als
+        // `bf_lay`; `xback` ist der BF-Back der Gegenseite (Back-Back-Cross).
+        // Lay >= 1000 ist der BF-Platzhalter und wird NICHT gesendet.
+        const bfOnly = bttsBfOnlyRows(b, isEchteQuote);
+        for (const z of bfOnly)
+          pushRow(rows, lid, { name: b.name, hit: h, b,
+            kind: z.kind, back: z.back, src: z.src,
+            lay: z.lay, vol: z.vol, xback: z.xback });
+        if (bfOnly.length)
+          log('  BTTS BF-only ' + b.name + ': ' + bfOnly.length +
+            ' Zeile(n) gesendet (Yes-Lay ' +
+            (isEchteQuote(b.layYes) ? b.layYes.toFixed(2) : '-') + ' / No-Lay ' +
+            (isEchteQuote(b.layNo) ? b.layNo.toFixed(2) : '-') + ')');
+        continue;
+      }
       // v8.62.12 (Boost-Quote-Carrier): BTTS-Single-Rows (bttsY/bttsN) auch
       // OHNE Arb-Richtung speichern (DB-Schnellpfad fuer „BTTS Ja/Nein"-
       // Boost-Combos). Die BB-Crosslegs (bttsBBY/bttsBBN oben) bleiben
@@ -13646,18 +13829,22 @@ for (const cp of crossPairs2) {
           if (b.corners)
             log('  DEBUG corners-match[' + lid + '] BF ' + b.name + ' line=' + b.line +
               ' -> PIN ' + h.teams.join(' v ') + ' ' + (cover ? cover.line + '=' + cover.over.toFixed(2) : 'KEIN 10.5-Kandidat'));
-          if (!cover) continue;
+          // v9.19.72: Fehlt die PIN-Linie, wird die BF-Linie NICHT mehr
+          // verworfen — sie geht als BF-Lay-only-Zeile (back=0) in den
+          // Snapshot (Begruendung in `emitOUEs`). Corners bleiben aussen
+          // vor: ihr Kind (ou105O) waere im Boost-Leg ein Tore-Markt.
+          if (!cover && b.corners) continue;
           const bf = {
             name: b.name, line: b.line, marketId: b.marketId, live: b.live,
             over: { lay: b.layO, vol: b.volO, back: b.backO, volB: b.volBO },
             under: { lay: b.layU, vol: b.volU, back: b.backU, volB: b.volBU }
           };
-          ouHits += emitOUEs(lid, log, rows, LIGA_NAMEN[lid] || '', h, bf, cover);
+          ouHits += emitOUEs(lid, log, rows, LIGA_NAMEN[lid] || '', h, bf, cover || null);
         }
         if (ouHits) log('  O/U (gemeinsamer Matcher): ' + ouHits + ' Zeilen aus ' + ouMlIds.length + ' Spielen');
       }
     }
-    // ---------- Team-Totals (Soccer): PIN team_total 0.5–2.5 je Team vs BF
+    // ---------- Team-Totals (Soccer): PIN team_total 0.5–4.5 je Team vs BF
     // "Team X Over/Under Y Goals" — Back-Lay + Back-Back-Crosslegs ----------
     {
       const ttMlIds = [...new Set(tts.map(e => e.h.id))];
@@ -13681,6 +13868,57 @@ for (const cp of crossPairs2) {
           ttHits += emitTeamTotalEs(lid, log, rows, LIGA_NAMEN[lid] || '', h, bf, cover, sideChar);
         }
         if (ttHits) log('  Team-Totals: ' + ttHits + ' Zeilen aus ' + ttMlIds.length + ' Spielen');
+      }
+      // v9.19.36 (Nutzerbefund 24.10.2026): PIN-only Team-Total-Zeilen.
+      // Fuehrt Betfair den ttot-Markt nicht („BF bietet zur Zeit kein Markt
+      // an"), existiert oben gar kein {h, b}-Paar und die DB traegt keine
+      // tt-Zeile, obwohl PIN die Linie hat — der Boost-Arb-Check sieht dann
+      // KEINE Gegenquote und die eine vorhandene (PIN 1.364) bleibt nutzlos.
+      // Gleiche Quelle wie der WHY-Pull (tools.js „PIN-only Team-Totals",
+      // v8.96.1), hier in die DB: reine Quote-Carrier-Zeile wie die
+      // tt-Singles oben, nur OHNE BF-Lay (``lay: 0``) — die Rechnung traegt
+      // V3 PIN-Back des Komplements (`tt..U`/`tt..O`). Sport-Guard: nur
+      // Soccer — PIN führt Team-Totals auch bei anderen Sportarten, deren
+      // Linien aber nicht in dieses Kind-Format (2 Ziffern) und den
+      // Katalog gehoeren (v8.84.2-Fehlerklasse: falsches Sport-Label).
+      // Dedupe gegen alles, was der BF-Weg in DIESEN Lauf geschrieben hat —
+      // dieselbe (mid, kind)-Zeile darf nur einmal vorkommen, sonst
+      // entscheidet beim UPSERT die Reihenfolge (v9.18.5).
+      if (sportVonLiga(lid) === 'Soccer') {
+        const ttGesehen = new Set(rows
+          .filter(r => r.mid && /^tt\d{2}[HA][OU]$/.test(r.kind || ''))
+          .map(r => r.mid + '|' + r.kind));
+        let pinOnly = 0;
+        for (const id of mlIds) {
+          const h = hById.get(id);
+          const pr = mlCache[id];
+          if (!h || !pr || !Array.isArray(h.teams) || h.teams.length < 2) continue;
+          const pinSrc = teamTotalsOf(pr);
+          if (!pinSrc || !pinSrc.length) continue;
+          for (const t of pinSrc) {
+            // home = h.teams[0] (PIN-Reihenfolge, v8.14.14) — dieselbe
+            // Zuordnung wie der BF-Weg oben ueber teamMatch.
+            const sc = t.team === 'home' ? 'H' : 'A';
+            const code = String(Math.round(t.line * 10)).padStart(2, '0');
+            for (const dir of ['O', 'U']) {
+              const q = dir === 'O' ? t.over : t.under;
+              if (!isEchteQuote(q) || q <= 1.01) continue;
+              const kind = 'tt' + code + sc + dir;
+              if (ttGesehen.has(id + '|' + kind)) continue;
+              ttGesehen.add(id + '|' + kind);
+              pinOnly++;
+              pushRow(rows, lid, {
+                lg: LIGA_NAMEN[lid] || '',
+                name: h.teams[0] + ' v ' + h.teams[1], hit: h, kind,
+                back: q,
+                src: 'PIN Team ' + sc + ' ' + (dir === 'O' ? 'Over' : 'Under') +
+                  ' ' + t.line
+              });
+            }
+          }
+        }
+        if (pinOnly)
+          log('  Team-Totals PIN-only: ' + pinOnly + ' Zeilen ohne BF-Markt');
       }
     }
     // ---------- Odd/Even (Total Goals): PIN Special (Odd/Even) vs BF Odd/Even-Markt ----------
@@ -13766,6 +14004,36 @@ for (const cp of crossPairs2) {
     if (hfousFiltered.length < hfous.length)
       log('  HT O/U Pre-filter: ' + hfous.length + ' -> ' + hfousFiltered.length + ' (' +
         (hfous.length - hfousFiltered.length) + ' Lines nur auf einer Seite gefiltert)');
+    // ---------- HT O/U BF-Lay-only (v9.19.85) ----------
+    // Linien, die Betfair fuehrt und Pinnacle NICHT, hat der Prefilter oben
+    // bisher STILL verworfen. Gemessen 30.10.2026 (`why` 1638761169, „SCR
+    // Altach v SV Ried"): BF fuehrt „First Half Goals 0.5/2.5", PIN nur
+    // 1.5 — es entstand keine Zeile, und der Merkur-Boost „Tipp 2 / Over
+    // 2,5 Tore 1.HZ" meldete „hfou25O (verfuegbar: hfou05U, hfou15O,
+    // hfou15U)", obwohl die Boerse die Gegenquote hat. Muster wie w2n
+    // (v9.19.20): `back: 0` = keine PIN-Quote, `lay` ist eine echte
+    // Boersen-Quote, `xback` der BF-Back der Gegenseite. Lay >= 1000 ist
+    // der BF-Platzhalter und wird NICHT gesendet.
+    let hfouBfOnlyN = 0;
+    const hfouBfOnlyLinien = new Set();
+    for (const { h, b } of hfous) {
+      const pinSet = hfouPinLines[h.id];
+      let hatPin = false;
+      if (pinSet && pinSet.size) {
+        for (const pl of pinSet) if (Math.abs(pl - b.line) < 0.01) { hatPin = true; break; }
+      }
+      if (hatPin) continue;
+      for (const z of hfouBfOnlyRows(b.line, b, isEchteQuote)) {
+        pushRow(rows, lid, { name: b.name, hit: h, b,
+          kind: z.kind, back: z.back, src: z.src,
+          lay: z.lay, vol: z.vol, xback: z.xback });
+        hfouBfOnlyN++;
+        hfouBfOnlyLinien.add(b.line + (z.kind.endsWith('O') ? 'O' : 'U'));
+      }
+    }
+    if (hfouBfOnlyN)
+      log('  HT O/U BF-Lay-only: ' + hfouBfOnlyN + ' Zeilen (' +
+        [...hfouBfOnlyLinien].sort().join(',') + ') — Linien ohne PIN-Pendant');
     const hfouGot = await pool(hfousFiltered, async ({ h, b }) => {
       const pr = mlCache[h.id];
       if (!pr) return null;
@@ -14890,8 +15158,10 @@ for (const cp of crossPairs2) {
       if (ou.corners)
         log('  DEBUG corners-match[' + lid + '] BF ' + ou.name + ' line=' + ou.line +
           ' -> PIN ' + h.teams.join(' v ') + ' ' + (pinOu ? pinOu.line + '=' + pinOu.over.toFixed(2) : 'KEIN 10.5-Kandidat'));
-      if (!pinOu) continue;
-      ouHit += emitOUEs(lid, log, rows, H2H_NAMEN[lid] || '', h, ou, pinOu);
+      // v9.19.72: siehe Soccer-Matcher — BF-Lay-only statt Verwerfen, wenn
+      // Pinnacle die Linie nicht fuehrt (Corners ausgenommen).
+      if (!pinOu && ou.corners) continue;
+      ouHit += emitOUEs(lid, log, rows, H2H_NAMEN[lid] || '', h, ou, pinOu || null);
     }
     let oeHit = 0;
     for (const oe of bf.oe || []) {
@@ -15481,10 +15751,11 @@ for (const cp of crossPairs2) {
     }
     return out;
   };
-  // Extrahiert Team-Totals (Team X Over/Under 0.5–2.5) aus PIN-Straight
+  // Extrahiert Team-Totals (Team X Over/Under 0.5–4.5) aus PIN-Straight
   // (type='team_total', period 0, designation over/under). Die Seite (home/
   // away) steckt im key-Feld ("s;0;tt;0.5;home"), Fallback m.team/m.side.
-  // Nur Linien 0.5–2.5 — nicht alle Maerkte sind zu jedem Zeitpunkt da,
+  // Nur Linien 0.5–4.5 (v9.19.36: 3,5/4,5 sind der Boost-Fall, fuer den die
+  // Gegenquote sonst fehlte) — nicht alle Maerkte sind zu jedem Zeitpunkt da,
   // fehlende Linien werden einfach uebersprungen (defensiv).
   const ttSide = m => {
     const km = /^s;\d+;tt;[\d.]+;(home|away)$/i.exec(String(m.key || ''));
@@ -15506,7 +15777,10 @@ for (const cp of crossPairs2) {
       }
       const over = toDecU(tp['over']), under = toDecU(tp['under']);
       if (over > 1.01 && under > 1.01 && typeof tp.line === 'number' &&
-        tp.line >= 0.5 && tp.line <= 2.5) {
+        // Linien bis 4.5 (v9.19.36): Pinnacle führt Team-Totals deutlich
+        // über 2.5 — der Boost „Bayern München erzielt mehr als 3,5 Tore"
+        // brauchte genau diese Linie, fand sie aber nie in der DB.
+        tp.line >= 0.5 && tp.line <= 4.5) {
         out.push({ team: side, line: tp.line, over, under });
       }
     }
@@ -15542,6 +15816,42 @@ for (const cp of crossPairs2) {
   function emitOUEs(lid, log, rows, lgName, h, b, cover) {
     const code = String(Math.round(b.line * 10)).padStart(2, '0');
     let n = 0;
+    // v9.19.72 (Nutzerbefund 28.10.2026, bwin-Boost „Bayern gewinnt und mehr
+    // als 5,5 Tore"): BF-Lay OHNE PIN-Gegenlinie. Gemessen ueber den
+    // WHY-Pull (COMP:11458113, mid 1637627664): Betfair fuehrt ALLE Linien
+    // (ou15…ou75, 71 Kanaele), Pinnacle nur 4.25–5.25 — der Matcher verwarf
+    // jede Linie ohne exaktes PIN-Pendant (`if (!cover) continue`) und die
+    // DB hatte nur `ou45O/ou45U`. Folge: dem Boost-Kombi-Leg `ou55O` fehlte
+    // die Gegenquote, die Engine meldete „Legs nicht in den gescannten
+    // Daten". Mit der Lay-only-Zeile (Lay 2.66, gemessen) rechnet dieselbe
+    // Engine den Boost: „Lay Both (A + B)" 1.07 EUR bei 20 EUR Einsatz.
+    // Muster wie W2N/pts/fgs (BF-Lay-only, back=0): die Quote ist eine echte
+    // Boerse-Quote, kein PIN-Back; `_finde_gegenquoten_db` akzeptiert sie
+    // seit v9.19.20 auch ohne Back. Derselbe Sachverhalt liegt im WHY-Weg
+    // (`src/tools.js`: „keine PIN-Linie (goalsOu=…) ↔ BF over") — dort
+    // entstand die Zeile schon, im SCAN-Pfad (der die DB fuellt) nicht.
+    // Lay >= 1000 ist der BF-Platzhalter und wird NICHT gesendet.
+    if (!cover) {
+      if (b.over && b.over.lay > 1.01 && b.over.lay < 1000) {
+        n++;
+        pushRow(rows, lid, { lg: lgName, name: b.name, hit: h, b,
+          live: h.live || b.live, kind: 'ou' + code + 'O', back: 0,
+          src: 'BF Over ' + b.line + ' (kein PIN-Markt)',
+          lay: b.over.lay, vol: b.over.vol,
+          xback: (b.under && isEchteQuote(b.under.back))
+            ? b.under.back : 0 });
+      }
+      if (b.under && b.under.lay > 1.01 && b.under.lay < 1000) {
+        n++;
+        pushRow(rows, lid, { lg: lgName, name: b.name, hit: h, b,
+          live: h.live || b.live, kind: 'ou' + code + 'U', back: 0,
+          src: 'BF Under ' + b.line + ' (kein PIN-Markt)',
+          lay: b.under.lay, vol: b.under.vol,
+          xback: (b.over && isEchteQuote(b.over.back))
+            ? b.over.back : 0 });
+      }
+      return n;
+    }
     if (cover.crossOnly) {
       // Nur Cross-Leg (PIN-Back + BF-Back), kein Lay-Leg: Exact Total Goals=0
       // als Under-0.5-Quelle (der Lay-Vergleich "0 vs BF Under 0.5" laeuft ueber
@@ -15597,7 +15907,7 @@ for (const cp of crossPairs2) {
     return n;
   }
 
-  // Team-Totals (Soccer): PIN team_total (0.5–2.5 je Heim/Auswaerts) vs BF
+  // Team-Totals (Soccer): PIN team_total (0.5–4.5 je Heim/Auswaerts) vs BF
   // "Team X Over/Under Y Goals" — Back-Lay + Back-Back-Crosslegs, analog
   // emitOUEs. Kinds: tt{line}{H|A}{O|U} (BL), ttBB{line}{H|A}{O|U} (BB).
   // b: { name, team, line, over:{lay,vol,back,volB}, under:{...}, marketId, live }

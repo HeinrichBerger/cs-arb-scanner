@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VBSB CS-Arb Scanner
 // @namespace    vbsb.csarb.scanner
-// @version      9.20.237
+// @version      9.20.242
 // @description  Pinnacle-Back (CS 1:1 / BTTS / H2H) vs Betfair Surebet-Scanner. Benoetigt Browser-VPN. Sendet Snapshots an die VBSB-App (127.0.0.1:8765). Auf bet-at-home nur ein Klick-Knopf zum Senden der Back-Quoten (kein Auto-Scan). Auf bet365 (v9.12.0) ein Klick-Knopf fuer einen Mess-Bericht — er schreibt KEINE Quoten.
 // @match        https://www.betfair.com/*
 // @match        https://www.pinnacle.com/*
@@ -591,9 +591,11 @@
     "gimnastica de torrelavega": "rs gimnastica",
     "glasgow cosmics": "glasgow cosmic",
     "gloria bistrita": "cs bistrita",
+    "gokulam kerala": "gokulam fc",
     "gotham fc": "nj ny gotham w",
     "grasshopper club zurich": "grasshoppers zurich",
     "guarani par": "club guarani",
+    "guiomar maristany zuleta de reales": "g maristany zuleta de r",
     "guyana amazon warriors": "guyana amazon war w",
     "gyeongju khnp": "gyeongju h n p",
     "hantharwady united": "hanthawaddy united fc",
@@ -683,6 +685,7 @@
     "man utd": "manchester united",
     "martin o donnell": "martin odonnell",
     "masood abdullah": "masood abdulah",
+    "matheus pucinelli de almeida": "mat pucinelli de almeid",
     "mb rouisset": "mb rouissat",
     "melquizael costa": "melaquizael costa",
     "metalist 1925 kharkiv": "fc kharkiv",
